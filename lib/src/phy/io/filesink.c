@@ -29,7 +29,7 @@
 int srsran_filesink_init(srsran_filesink_t* q, const char* filename, srsran_datatype_t type)
 {
   bzero(q, sizeof(srsran_filesink_t));
-  q->f = fopen(filename, "w");
+  q->f = fopen(filename, "wb");
   if (!q->f) {
     perror("fopen");
     return -1;
@@ -139,11 +139,11 @@ int srsran_filesink_write_multi(srsran_filesink_t* q, void** buffer, int nsample
       }
       if (nchannels > 1) {
         uint32_t count = 0;
-        for (i = 0; i < nsamples; i++) {
+       // for (i = 0; i < nsamples; i++) {
           for (j = 0; j < nchannels; j++) {
-            count += fwrite(&cbuf[j][i], size, 1, q->f);
+            count += fwrite(&cbuf[j][0], size, nsamples, q->f);
           }
-        }
+       // }
         return count;
       } else {
         return fwrite(buffer[0], size, nsamples, q->f);
