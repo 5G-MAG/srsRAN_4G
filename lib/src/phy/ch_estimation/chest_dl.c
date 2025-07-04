@@ -438,7 +438,7 @@ static float estimate_noise_empty_sc(srsran_chest_dl_t* q, cf_t* input)
   noise_power += srsran_vec_avg_power_cf(&input[k_pss - 5], 5);  // 5 empty SC before PSS
   noise_power += srsran_vec_avg_power_cf(&input[k_pss + 62], 5); // 5 empty SC after PSS
 
-  return noise_power;
+  return noise_power / 4;
 }
 
 #define cesymb(i) ce[SRSRAN_RE_IDX(q->cell.nof_prb, i, 0)]
