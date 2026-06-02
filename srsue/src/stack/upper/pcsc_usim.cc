@@ -1,5 +1,5 @@
 /**
- * Copyright 2013-2021 Software Radio Systems Limited
+ * Copyright 2013-2023 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -32,12 +32,7 @@ using namespace srsran;
 
 namespace srsue {
 
-pcsc_usim::pcsc_usim(srslog::basic_logger& logger) : usim_base(logger), sc(logger)
-{
-  bzero(ck, CK_LEN);
-  bzero(ik, IK_LEN);
-  bzero(auts, IK_LEN);
-}
+pcsc_usim::pcsc_usim(srslog::basic_logger& logger) : usim_base(logger), sc(logger) {}
 
 pcsc_usim::~pcsc_usim()
 {
@@ -223,7 +218,7 @@ auth_result_t pcsc_usim::generate_authentication_response_5g(uint8_t*    rand,
   security_generate_k_seaf(k_ausf, serving_network_name, k_seaf);
   logger.debug(k_seaf, 32, "K SEAF");
   // Generate K_amf
-  security_generate_k_amf(k_ausf, imsi_str.c_str(), abba, abba_len, k_amf);
+  security_generate_k_amf(k_seaf, imsi_str.c_str(), abba, abba_len, k_amf);
   logger.debug(k_amf, 32, "K AMF");
 
   ret = AUTH_OK;

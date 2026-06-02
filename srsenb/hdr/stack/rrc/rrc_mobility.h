@@ -1,5 +1,5 @@
 /**
- * Copyright 2013-2021 Software Radio Systems Limited
+ * Copyright 2013-2023 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -59,6 +59,8 @@ public:
                         const asn1::s1ap::sourceenb_to_targetenb_transparent_container_s& container,
                         asn1::s1ap::cause_c&                                              cause);
 
+  std::pair<uint16_t, uint32_t> get_source_ue_rnti_and_pci();
+
 private:
   // helper methods
   bool update_ue_var_meas_cfg(uint32_t               src_earfcn,
@@ -66,7 +68,8 @@ private:
                               asn1::rrc::meas_cfg_s* diff_meas_cfg);
 
   // Handover from source cell
-  bool start_ho_preparation(uint32_t target_eci, uint8_t measobj_id, bool fwd_direct_path_available);
+  bool
+  start_ho_preparation(uint32_t target_eci, uint16_t target_tac, uint8_t measobj_id, bool fwd_direct_path_available);
 
   // Handover to target cell
   void fill_mobility_reconf_common(asn1::rrc::dl_dcch_msg_s& msg,
@@ -90,6 +93,7 @@ private:
   // events
   struct ho_meas_report_ev {
     uint32_t                                target_eci      = 0;
+    uint16_t                                target_tac      = 0;
     const asn1::rrc::meas_obj_to_add_mod_s* meas_obj        = nullptr;
     bool                                    direct_fwd_path = false;
   };
@@ -116,6 +120,8 @@ private:
   struct s1_target_ho_st {
     asn1::s1ap::cause_c   failure_cause;
     std::vector<uint32_t> pending_tunnels;
+    uint16_t              src_rnti;
+    uint32_t              src_pci;
   };
   struct wait_recfg_comp {};
   struct s1_source_ho_st : public subfsm_t<s1_source_ho_st> {

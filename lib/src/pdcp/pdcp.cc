@@ -1,5 +1,5 @@
 /**
- * Copyright 2013-2021 Software Radio Systems Limited
+ * Copyright 2013-2023 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -120,7 +120,7 @@ int pdcp::add_bearer(uint32_t lcid, const pdcp_config_t& cfg)
   if (cfg.rat == srsran::srsran_rat_t::lte) {
     entity.reset(new pdcp_entity_lte{rlc, rrc, gw, task_sched, logger, lcid});
   } else if (cfg.rat == srsran::srsran_rat_t::nr) {
-    entity.reset(new pdcp_entity_lte{rlc, rrc, gw, task_sched, logger, lcid});
+    entity.reset(new pdcp_entity_nr{rlc, rrc, gw, task_sched, logger, lcid});
   }
 
   if (not entity->configure(cfg)) {
@@ -371,12 +371,12 @@ void pdcp::get_metrics(pdcp_metrics_t& m, const uint32_t nof_tti)
     double rx_rate_mbps = (nof_tti > 0) ? ((metrics.num_rx_pdu_bytes * 8 / (double)1e6) / (nof_tti / 1000.0)) : 0.0;
     double tx_rate_mbps = (nof_tti > 0) ? ((metrics.num_tx_pdu_bytes * 8 / (double)1e6) / (nof_tti / 1000.0)) : 0.0;
 
-    logger.info("lcid=%d, rx_rate_mbps=%4.2f (real=%4.2f), tx_rate_mbps=%4.2f (real=%4.2f)",
-                it->first,
-                rx_rate_mbps,
-                rx_rate_mbps_real_time,
-                tx_rate_mbps,
-                tx_rate_mbps_real_time);
+    logger.debug("lcid=%d, rx_rate_mbps=%4.2f (real=%4.2f), tx_rate_mbps=%4.2f (real=%4.2f)",
+                 it->first,
+                 rx_rate_mbps,
+                 rx_rate_mbps_real_time,
+                 tx_rate_mbps,
+                 tx_rate_mbps_real_time);
     m.bearer[it->first] = metrics;
   }
 

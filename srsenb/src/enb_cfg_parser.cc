@@ -1,5 +1,5 @@
 /**
- * Copyright 2013-2021 Software Radio Systems Limited
+ * Copyright 2013-2023 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -20,7 +20,11 @@
  */
 
 #include "enb_cfg_parser.h"
+#include "srsenb/hdr/cbs_encoding/cbs_encoder.h"
+#include "srsenb/hdr/cbs_encoding/cbs_encoding_helpers.h"
 #include "srsenb/hdr/enb.h"
+#include "srsgnb/hdr/stack/rrc/rrc_nr_config_utils.h"
+#include "srsran/adt/bounded_bitset.h"
 #include "srsran/asn1/rrc_utils.h"
 #include "srsran/common/band_helper.h"
 #include "srsran/common/multiqueue.h"
@@ -78,6 +82,39 @@ bool sib_is_present(const sched_info_list_l& l, sib_type_e sib_num)
   return false;
 }
 
+int field_additional_plmns::parse(libconfig::Setting& root)
+{
+  if (root.getLength() > ASN1_RRC_MAX_PLMN_MINUS1_R14) {
+    ERROR("PLMN-IdentityList cannot have more than %d entries", ASN1_RRC_MAX_PLMN_R11);
+    return SRSRAN_ERROR;
+  }
+  // Reserve the first place to the primary PLMN, see "SystemInformationBlockType1 field descriptions" in TS 36.331
+  data->plmn_id_list.resize((uint32_t)root.getLength() + 1);
+  for (uint32_t i = 0; i < data->plmn_id_list.size() - 1; i++) {
+    std::string mcc_str, mnc_str;
+    if (!root[i].lookupValue("mcc", mcc_str)) {
+      ERROR("Missing field mcc in additional_plmn=%d\n", i);
+      return SRSRAN_ERROR;
+    }
+
+    if (!root[i].lookupValue("mnc", mnc_str)) {
+      ERROR("Missing field mnc in additional_plmn=%d\n", i);
+      return SRSRAN_ERROR;
+    }
+
+    srsran::plmn_id_t plmn;
+    if (plmn.from_string(mcc_str + mnc_str) == SRSRAN_ERROR) {
+      ERROR("Could not convert %s to a plmn_id in additional_plmn=%d", (mcc_str + mnc_str).c_str(), i);
+      return SRSRAN_ERROR;
+    }
+    srsran::to_asn1(&data->plmn_id_list[i + 1].plmn_id, plmn);
+    if (not parse_enum_by_str(data->plmn_id_list[i + 1].cell_reserved_for_oper, "cell_reserved_for_oper", root[i])) {
+      data->plmn_id_list[i + 1].cell_reserved_for_oper = plmn_id_info_s::cell_reserved_for_oper_e_::not_reserved;
+    }
+  }
+  return 0;
+}
+
 int field_sched_info::parse(libconfig::Setting& root)
 {
   data->sched_info_list.resize((uint32_t)root.getLength());
@@ -91,6 +128,15 @@ int field_sched_info::parse(libconfig::Setting& root)
       if (data->sched_info_list[i].sib_map_info.size() < ASN1_RRC_MAX_SIB) {
         for (uint32_t j = 0; j < data->sched_info_list[i].sib_map_info.size(); j++) {
           uint32_t sib_index = root[i]["si_mapping_info"][j];
+
+          // Make sure that the SIB-11 and SIB-12 are scheduled in SI messages that don't contain any other SIB.
+          if (((sib_index == 11) || (sib_index == 12)) && (data->sched_info_list[i].sib_map_info.size() > 1)) {
+            fprintf(stderr,
+                    "SIB %d cannot be bundled with other SIBs in a SI message in sched_info, as it may be segmented.\n",
+                    sib_index);
+            return SRSRAN_ERROR;
+          }
+
           if (sib_index >= 3 && sib_index <= 13) {
             data->sched_info_list[i].sib_map_info[j].value = (sib_type_e::options)(sib_index - 3);
           } else {
@@ -131,21 +177,276 @@ int field_intra_neigh_cell_list::parse(libconfig::Setting& root)
 
 int field_intra_black_cell_list::parse(libconfig::Setting& root)
 {
-  data->intra_freq_black_cell_list.resize((uint32_t)root.getLength());
-  data->intra_freq_black_cell_list_present = data->intra_freq_neigh_cell_list.size() > 0;
-  for (uint32_t i = 0; i < data->intra_freq_black_cell_list.size() && i < ASN1_RRC_MAX_CELL_BLACK; i++) {
-    if (not parse_enum_by_number(data->intra_freq_black_cell_list[i].range, "range", root[i])) {
-      fprintf(stderr, "Missing field range in black_cell=%d\n", i);
+  data->intra_freq_excluded_cell_list.resize((uint32_t)root.getLength());
+  data->intra_freq_excluded_cell_list_present = data->intra_freq_excluded_cell_list.size() > 0;
+  for (uint32_t i = 0; i < data->intra_freq_excluded_cell_list.size() && i < ASN1_RRC_MAX_EXCLUDED_CELL; i++) {
+    if (not parse_enum_by_number(data->intra_freq_excluded_cell_list[i].range, "range", root[i])) {
+      fprintf(stderr, "Missing field range in excluded_cell=%d\n", i);
       return SRSRAN_ERROR;
     }
-    data->intra_freq_black_cell_list[i].range_present = true;
+    data->intra_freq_excluded_cell_list[i].range_present = true;
 
     int start = 0;
     if (!root[i].lookupValue("start", start)) {
-      fprintf(stderr, "Missing field start in black_cell=%d\n", i);
+      fprintf(stderr, "Missing field start in excluded_cell=%d\n", i);
       return SRSRAN_ERROR;
     }
-    data->intra_freq_black_cell_list[i].start = (uint16)start;
+    data->intra_freq_excluded_cell_list[i].start = (uint16)start;
+  }
+  return 0;
+}
+
+int field_inter_freq_carrier_freq_list::parse(libconfig::Setting& root)
+{
+  data->inter_freq_carrier_freq_list.resize((uint32_t)root.getLength());
+  for (uint32_t i = 0; i < data->inter_freq_carrier_freq_list.size() && i < ASN1_RRC_MAX_FREQ; i++) {
+    unsigned int dl_carrier_freq = 0;
+    if (!root[i].lookupValue("dl_carrier_freq", dl_carrier_freq)) {
+      ERROR("Missing field `dl_carrier_freq` in inter_freq_carrier_freq_list=%d", i);
+      return SRSRAN_ERROR;
+    }
+    data->inter_freq_carrier_freq_list[i].dl_carrier_freq = dl_carrier_freq;
+
+    int q_rx_lev_min = 0;
+    if (!root[i].lookupValue("q_rx_lev_min", q_rx_lev_min)) {
+      ERROR("Missing field `q_rx_lev_min` in inter_freq_carrier_freq_list=%d", i);
+      return SRSRAN_ERROR;
+    }
+    data->inter_freq_carrier_freq_list[i].q_rx_lev_min = q_rx_lev_min;
+
+    int p_max = 0;
+    if (root[i].lookupValue("p_max", p_max)) {
+      data->inter_freq_carrier_freq_list[i].p_max_present = true;
+      data->inter_freq_carrier_freq_list[i].p_max         = p_max;
+    }
+
+    unsigned int t_resel_eutra = 0;
+    if (!root[i].lookupValue("t_resel_eutra", t_resel_eutra)) {
+      ERROR("Missing field `t_resel_eutra` in inter_freq_carrier_freq_list=%d", i);
+      return SRSRAN_ERROR;
+    }
+    data->inter_freq_carrier_freq_list[i].t_resel_eutra = t_resel_eutra;
+
+    if (root[i].exists("t_resel_eutra_sf")) {
+      data->inter_freq_carrier_freq_list[i].t_resel_eutra_sf_present = true;
+
+      field_asn1_enum_number_str<asn1::rrc::speed_state_scale_factors_s::sf_medium_e_> sf_medium(
+          "sf_medium", &data->inter_freq_carrier_freq_list[i].t_resel_eutra_sf.sf_medium);
+      if (sf_medium.parse(root[i]["t_resel_eutra_sf"])) {
+        ERROR("Error parsing `sf_medium` in inter_freq_carrier_freq_list=%d t_resel_eutra_sf", i);
+        return SRSRAN_ERROR;
+      }
+
+      field_asn1_enum_number_str<asn1::rrc::speed_state_scale_factors_s::sf_high_e_> sf_high(
+          "sf_high", &data->inter_freq_carrier_freq_list[i].t_resel_eutra_sf.sf_high);
+      if (sf_high.parse(root[i]["t_resel_eutra_sf"])) {
+        ERROR("Error parsing `sf_high` in inter_freq_carrier_freq_list=%d t_resel_eutra_sf", i);
+        return SRSRAN_ERROR;
+      }
+    }
+
+    unsigned int thresh_x_high = 0;
+    if (!root[i].lookupValue("thresh_x_high", thresh_x_high)) {
+      ERROR("Missing field `thresh_x_high` in inter_freq_carrier_freq_list=%d", i);
+      return SRSRAN_ERROR;
+    }
+    data->inter_freq_carrier_freq_list[i].thresh_x_high = thresh_x_high;
+
+    unsigned int thresh_x_low = 0;
+    if (!root[i].lookupValue("thresh_x_low", thresh_x_low)) {
+      ERROR("Missing field `thresh_x_low` in inter_freq_carrier_freq_list=%d", i);
+      return SRSRAN_ERROR;
+    }
+    data->inter_freq_carrier_freq_list[i].thresh_x_low = thresh_x_low;
+
+    field_asn1_enum_number<asn1::rrc::allowed_meas_bw_e> allowed_meas_bw(
+        "allowed_meas_bw", &data->inter_freq_carrier_freq_list[i].allowed_meas_bw);
+    if (allowed_meas_bw.parse(root[i])) {
+      ERROR("Error parsing `allowed_meas_bw` in inter_freq_carrier_freq_list=%d", i);
+      return SRSRAN_ERROR;
+    }
+
+    bool presence_ant_port1 = 0;
+    if (!root[i].lookupValue("presence_ant_port_1", presence_ant_port1)) {
+      ERROR("Missing field `presence_ant_port_1` in inter_freq_carrier_freq_list=%d", i);
+      return SRSRAN_ERROR;
+    }
+    data->inter_freq_carrier_freq_list[i].presence_ant_port1 = presence_ant_port1;
+
+    unsigned int cell_resel_prio = 0;
+    if (root[i].lookupValue("cell_resel_prio", cell_resel_prio)) {
+      data->inter_freq_carrier_freq_list[i].cell_resel_prio_present = true;
+      data->inter_freq_carrier_freq_list[i].cell_resel_prio         = cell_resel_prio;
+    }
+
+    field_asn1_enum_number<asn1::rrc::q_offset_range_e> q_offset_freq(
+        "q_offset_freq", &data->inter_freq_carrier_freq_list[i].q_offset_freq);
+    if (!q_offset_freq.parse(root[i])) {
+      data->inter_freq_carrier_freq_list[i].q_offset_freq_present = true;
+    }
+
+    field_asn1_bitstring_number<asn1::fixed_bitstring<2>, uint8_t> neigh_cell_cfg(
+        "neigh_cell_cfg", &data->inter_freq_carrier_freq_list[i].neigh_cell_cfg);
+    if (neigh_cell_cfg.parse(root[i])) {
+      ERROR("Error parsing `neigh_cell_cfg` in inter_freq_carrier_freq_list=%d", i);
+      return SRSRAN_ERROR;
+    }
+
+    if (root[i].exists("inter_freq_neigh_cell_list")) {
+      auto inter_neigh_cell_list_parser = new field_inter_freq_neigh_cell_list(&data->inter_freq_carrier_freq_list[i]);
+      HANDLEPARSERCODE(inter_neigh_cell_list_parser->parse(root[i]["inter_freq_neigh_cell_list"]));
+    }
+
+    if (root[i].exists("inter_freq_black_cell_list")) {
+      auto inter_black_cell_list_parser = new field_inter_freq_black_cell_list(&data->inter_freq_carrier_freq_list[i]);
+      HANDLEPARSERCODE(inter_black_cell_list_parser->parse(root[i]["inter_freq_black_cell_list"]));
+    }
+  }
+  return 0;
+}
+
+int field_inter_freq_neigh_cell_list::parse(libconfig::Setting& root)
+{
+  data->inter_freq_neigh_cell_list.resize((uint32_t)root.getLength());
+  data->inter_freq_neigh_cell_list_present = data->inter_freq_neigh_cell_list.size() > 0;
+  for (uint32_t i = 0; i < data->inter_freq_neigh_cell_list.size() && i < ASN1_RRC_MAX_EXCLUDED_CELL; i++) {
+    if (not parse_enum_by_number(data->inter_freq_neigh_cell_list[i].q_offset_cell, "q_offset_cell", root[i])) {
+      ERROR("Missing field q_offset_cell in neigh_cell=%d\n", i);
+      return SRSRAN_ERROR;
+    }
+
+    unsigned int phys_cell_id = 0;
+    if (!root[i].lookupValue("phys_cell_id", phys_cell_id)) {
+      ERROR("Missing field phys_cell_id in neigh_cell=%d\n", i);
+      return SRSRAN_ERROR;
+    }
+    data->inter_freq_neigh_cell_list[i].pci = (uint16)phys_cell_id;
+  }
+  return 0;
+}
+
+int field_inter_freq_black_cell_list::parse(libconfig::Setting& root)
+{
+  data->inter_freq_excluded_cell_list.resize((uint32_t)root.getLength());
+  data->inter_freq_excluded_cell_list_present = data->inter_freq_excluded_cell_list.size() > 0;
+  for (uint32_t i = 0; i < data->inter_freq_excluded_cell_list.size() && i < ASN1_RRC_MAX_EXCLUDED_CELL; i++) {
+    if (not parse_enum_by_number(data->inter_freq_excluded_cell_list[i].range, "range", root[i])) {
+      ERROR("Missing field range in excluded_cell=%d\n", i);
+      return SRSRAN_ERROR;
+    }
+    data->inter_freq_excluded_cell_list[i].range_present = true;
+
+    unsigned int start = 0;
+    if (!root[i].lookupValue("start", start)) {
+      ERROR("Missing field start in excluded_cell=%d\n", i);
+      return SRSRAN_ERROR;
+    }
+    data->inter_freq_excluded_cell_list[i].start = (uint16)start;
+  }
+  return 0;
+}
+
+int field_carrier_freq_list_utra_fdd::parse(libconfig::Setting& root)
+{
+  data->carrier_freq_list_utra_fdd.resize((uint32_t)root.getLength());
+  data->carrier_freq_list_utra_fdd_present = data->carrier_freq_list_utra_fdd.size() > 0;
+  for (uint32_t i = 0; i < data->carrier_freq_list_utra_fdd.size() && i < ASN1_RRC_MAX_UTRA_FDD_CARRIER; i++) {
+    unsigned int carrier_freq = 0;
+    if (!root[i].lookupValue("carrier_freq", carrier_freq)) {
+      fprintf(stderr, "Missing field `carrier_freq` in carrier_freq_list_utra_fdd=%d\n", i);
+      return SRSRAN_ERROR;
+    }
+    data->carrier_freq_list_utra_fdd[i].carrier_freq = carrier_freq;
+
+    unsigned int cell_resel_prio = 0;
+    if (root[i].lookupValue("cell_resel_prio", cell_resel_prio)) {
+      data->carrier_freq_list_utra_fdd[i].cell_resel_prio_present = true;
+      data->carrier_freq_list_utra_fdd[i].cell_resel_prio         = cell_resel_prio;
+    }
+
+    unsigned int thresh_x_high = 0;
+    if (!root[i].lookupValue("thresh_x_high", thresh_x_high)) {
+      ERROR("Missing field `thresh_x_high` in carrier_freq_list_utra_fdd=%d", i);
+      return SRSRAN_ERROR;
+    }
+    data->carrier_freq_list_utra_fdd[i].thresh_x_high = thresh_x_high;
+
+    unsigned int thresh_x_low = 0;
+    if (!root[i].lookupValue("thresh_x_low", thresh_x_low)) {
+      ERROR("Missing field `thresh_x_low` in carrier_freq_list_utra_fdd=%d", i);
+      return SRSRAN_ERROR;
+    }
+    data->carrier_freq_list_utra_fdd[i].thresh_x_low = thresh_x_low;
+
+    int q_rx_lev_min = 0;
+    if (!root[i].lookupValue("q_rx_lev_min", q_rx_lev_min)) {
+      ERROR("Missing field `q_rx_lev_min` in carrier_freq_list_utra_fdd=%d", i);
+      return SRSRAN_ERROR;
+    }
+    data->carrier_freq_list_utra_fdd[i].q_rx_lev_min = q_rx_lev_min;
+
+    int p_max_utra = 0;
+    if (!root[i].lookupValue("p_max_utra", p_max_utra)) {
+      ERROR("Missing field `p_max_utra` in carrier_freq_list_utra_fdd=%d", i);
+      return SRSRAN_ERROR;
+    }
+    data->carrier_freq_list_utra_fdd[i].p_max_utra = p_max_utra;
+
+    int q_qual_min = 0;
+    if (!root[i].lookupValue("q_qual_min", q_qual_min)) {
+      ERROR("Missing field `q_qual_min` in carrier_freq_list_utra_fdd=%d", i);
+      return SRSRAN_ERROR;
+    }
+    data->carrier_freq_list_utra_fdd[i].q_qual_min = q_qual_min;
+  }
+  return 0;
+}
+
+int field_carrier_freq_list_utra_tdd::parse(libconfig::Setting& root)
+{
+  data->carrier_freq_list_utra_tdd.resize((uint32_t)root.getLength());
+  data->carrier_freq_list_utra_tdd_present = data->carrier_freq_list_utra_tdd.size() > 0;
+  for (uint32_t i = 0; i < data->carrier_freq_list_utra_tdd.size() && i < ASN1_RRC_MAX_UTRA_TDD_CARRIER; i++) {
+    unsigned int carrier_freq = 0;
+    if (!root[i].lookupValue("carrier_freq", carrier_freq)) {
+      fprintf(stderr, "Missing field `carrier_freq` in carrier_freq_list_utra_tdd=%d\n", i);
+      return SRSRAN_ERROR;
+    }
+    data->carrier_freq_list_utra_tdd[i].carrier_freq = carrier_freq;
+
+    unsigned int cell_resel_prio = 0;
+    if (root[i].lookupValue("cell_resel_prio", cell_resel_prio)) {
+      data->carrier_freq_list_utra_tdd[i].cell_resel_prio_present = true;
+      data->carrier_freq_list_utra_tdd[i].cell_resel_prio         = cell_resel_prio;
+    }
+
+    unsigned int thresh_x_high = 0;
+    if (!root[i].lookupValue("thresh_x_high", thresh_x_high)) {
+      ERROR("Missing field `thresh_x_high` in carrier_freq_list_utra_tdd=%d", i);
+      return SRSRAN_ERROR;
+    }
+    data->carrier_freq_list_utra_tdd[i].thresh_x_high = thresh_x_high;
+
+    unsigned int thresh_x_low = 0;
+    if (!root[i].lookupValue("thresh_x_low", thresh_x_low)) {
+      ERROR("Missing field `thresh_x_low` in carrier_freq_list_utra_tdd=%d", i);
+      return SRSRAN_ERROR;
+    }
+    data->carrier_freq_list_utra_tdd[i].thresh_x_low = thresh_x_low;
+
+    int q_rx_lev_min = 0;
+    if (!root[i].lookupValue("q_rx_lev_min", q_rx_lev_min)) {
+      ERROR("Missing field `q_rx_lev_min` in carrier_freq_list_utra_tdd=%d", i);
+      return SRSRAN_ERROR;
+    }
+    data->carrier_freq_list_utra_tdd[i].q_rx_lev_min = q_rx_lev_min;
+
+    int p_max_utra = 0;
+    if (!root[i].lookupValue("p_max_utra", p_max_utra)) {
+      ERROR("Missing field `p_max_utra` in carrier_freq_list_utra_tdd=%d", i);
+      return SRSRAN_ERROR;
+    }
+    data->carrier_freq_list_utra_tdd[i].p_max_utra = p_max_utra;
   }
   return 0;
 }
@@ -174,7 +475,7 @@ int field_carrier_freqs_info_list::parse(libconfig::Setting& root)
     field_asn1_bitstring_number<asn1::fixed_bitstring<8>, uint8_t> ncc_permitted(
         "ncc_permitted", &data->carrier_freqs_info_list[i].common_info.ncc_permitted);
     if (ncc_permitted.parse(root[i])) {
-      ERROR("Error parsing `ncc_permitted` in carrier_freqs_info_lsit=%d", i);
+      ERROR("Error parsing `ncc_permitted` in carrier_freqs_info_list=%d", i);
       return SRSRAN_ERROR;
     }
 
@@ -643,6 +944,262 @@ int field_qci::parse(libconfig::Setting& root)
   return 0;
 }
 
+int field_5g_srb::parse(libconfig::Setting& root)
+{
+  // Parse RLC AM section
+  asn1::rrc_nr::rlc_cfg_c* rlc_cfg = &cfg.rlc_cfg;
+  if (root.exists("ul_am") && root.exists("dl_am")) {
+    rlc_cfg->set_am();
+    cfg.present = true;
+  }
+
+  // RLC-UM must not exist in this section
+  if (root.exists("ul_um") || root.exists("dl_um")) {
+    ERROR("Error SRBs must be AM.");
+    return SRSRAN_ERROR;
+  }
+
+  // Parse RLC-AM section
+  if (root.exists("ul_am")) {
+    asn1::rrc_nr::ul_am_rlc_s& ul_am_rlc = rlc_cfg->am().ul_am_rlc;
+
+    // SN length
+    field_asn1_enum_number<asn1::rrc_nr::sn_field_len_am_e> rlc_sn_size_ul("sn_field_len", &ul_am_rlc.sn_field_len);
+    if (rlc_sn_size_ul.parse(root["ul_am"]) == SRSRAN_ERROR) {
+      ul_am_rlc.sn_field_len_present = false;
+    } else {
+      ul_am_rlc.sn_field_len_present = true;
+    }
+
+    field_asn1_enum_number<asn1::rrc_nr::t_poll_retx_e> t_poll_retx("t_poll_retx", &ul_am_rlc.t_poll_retx);
+    if (t_poll_retx.parse(root["ul_am"])) {
+      ERROR("Error can't find t_poll_retx in section ul_am");
+      return SRSRAN_ERROR;
+    }
+
+    field_asn1_enum_number<asn1::rrc_nr::poll_pdu_e> poll_pdu("poll_pdu", &ul_am_rlc.poll_pdu);
+    if (poll_pdu.parse(root["ul_am"])) {
+      ERROR("Error can't find poll_pdu in section ul_am");
+      return SRSRAN_ERROR;
+    }
+
+    field_asn1_enum_number<asn1::rrc_nr::poll_byte_e> poll_byte("poll_byte", &ul_am_rlc.poll_byte);
+    if (poll_byte.parse(root["ul_am"])) {
+      ERROR("Error can't find poll_byte in section ul_am");
+      return SRSRAN_ERROR;
+    }
+
+    field_asn1_enum_number<asn1::rrc_nr::ul_am_rlc_s::max_retx_thres_e_> max_retx_thresh("max_retx_thres",
+                                                                                         &ul_am_rlc.max_retx_thres);
+    if (max_retx_thresh.parse(root["ul_am"])) {
+      ERROR("Error can't find max_retx_thresh in section ul_am");
+      return SRSRAN_ERROR;
+    }
+  }
+
+  if (root.exists("dl_am")) {
+    asn1::rrc_nr::dl_am_rlc_s& dl_am_rlc = rlc_cfg->am().dl_am_rlc;
+
+    // SN length
+    field_asn1_enum_number<asn1::rrc_nr::sn_field_len_am_e> rlc_sn_size_ul("sn_field_len", &dl_am_rlc.sn_field_len);
+    if (rlc_sn_size_ul.parse(root["dl_am"]) == SRSRAN_ERROR) {
+      dl_am_rlc.sn_field_len_present = false;
+    } else {
+      dl_am_rlc.sn_field_len_present = true;
+    }
+
+    field_asn1_enum_number<asn1::rrc_nr::t_reassembly_e> t_reassembly("t_reassembly", &dl_am_rlc.t_reassembly);
+    if (t_reassembly.parse(root["dl_am"])) {
+      ERROR("Error can't find t_reordering in section dl_am");
+      return SRSRAN_ERROR;
+    }
+
+    field_asn1_enum_number<asn1::rrc_nr::t_status_prohibit_e> t_status_prohibit("t_status_prohibit",
+                                                                                &dl_am_rlc.t_status_prohibit);
+    if (t_status_prohibit.parse(root["dl_am"])) {
+      ERROR("Error can't find t_status_prohibit in section dl_am");
+      return SRSRAN_ERROR;
+    }
+  }
+
+  return 0;
+}
+
+int field_five_qi::parse(libconfig::Setting& root)
+{
+  uint32_t nof_five_qi = (uint32_t)root.getLength();
+  for (uint32_t i = 0; i < nof_five_qi; i++) {
+    libconfig::Setting& q = root[i];
+
+    uint32_t five_qi = q["five_qi"];
+
+    rrc_nr_cfg_five_qi_t five_qi_cfg;
+
+    // Parse PDCP section
+    if (!q.exists("pdcp_nr_config")) {
+      fprintf(stderr, "Error section pdcp_nr_config not found for 5qi=%d\n", five_qi);
+      return SRSRAN_ERROR;
+    }
+    libconfig::Setting&       pdcp_nr  = q["pdcp_nr_config"];
+    asn1::rrc_nr::pdcp_cfg_s* pdcp_cfg = &five_qi_cfg.pdcp_cfg;
+
+    // Get PDCP-NR DRB configs
+    if (!pdcp_nr.exists("drb")) {
+      fprintf(stderr, "Error section drb not found for 5QI=%d\n", five_qi);
+      return SRSRAN_ERROR;
+    }
+    libconfig::Setting&               drb     = pdcp_nr["drb"];
+    asn1::rrc_nr::pdcp_cfg_s::drb_s_* drb_cfg = &pdcp_cfg->drb;
+    pdcp_cfg->drb_present                     = true;
+
+    // PDCP SN size UL
+    field_asn1_enum_number<asn1::rrc_nr::pdcp_cfg_s::drb_s_::pdcp_sn_size_ul_e_> pdcp_sn_size_ul(
+        "pdcp_sn_size_ul", &drb_cfg->pdcp_sn_size_ul);
+    if (pdcp_sn_size_ul.parse(drb) == SRSRAN_ERROR) {
+      drb_cfg->pdcp_sn_size_ul_present = false;
+    } else {
+      drb_cfg->pdcp_sn_size_ul_present = true;
+    }
+
+    // PDCP SN size DL
+    field_asn1_enum_number<asn1::rrc_nr::pdcp_cfg_s::drb_s_::pdcp_sn_size_dl_e_> pdcp_sn_size_dl(
+        "pdcp_sn_size_dl", &drb_cfg->pdcp_sn_size_dl);
+    if (pdcp_sn_size_dl.parse(drb) == SRSRAN_ERROR) {
+      drb_cfg->pdcp_sn_size_dl_present = false;
+    } else {
+      drb_cfg->pdcp_sn_size_dl_present = true;
+    }
+
+    // Discard timer
+    field_asn1_enum_number<asn1::rrc_nr::pdcp_cfg_s::drb_s_::discard_timer_e_> discard_timer("discard_timer",
+                                                                                             &drb_cfg->discard_timer);
+    if (discard_timer.parse(drb) == -1) {
+      drb_cfg->discard_timer_present = false;
+    } else {
+      drb_cfg->discard_timer_present = true;
+    }
+
+    parser::field<bool> status_report_required("status_report_required", &drb_cfg->status_report_required_present);
+    status_report_required.parse(drb);
+
+    parser::field<bool> out_of_order_delivery("out_of_order_delivery", &drb_cfg->out_of_order_delivery_present);
+    out_of_order_delivery.parse(drb);
+
+    parser::field<bool> integrity_protection("integrity_protection", &drb_cfg->integrity_protection_present);
+    integrity_protection.parse(drb);
+
+    drb_cfg->hdr_compress.set_not_used();
+    // Finish DRB config
+
+    // t_Reordering
+    field_asn1_enum_number<asn1::rrc_nr::pdcp_cfg_s::t_reordering_e_> t_reordering("t_reordering",
+                                                                                   &pdcp_cfg->t_reordering);
+    if (t_reordering.parse(pdcp_nr) == SRSRAN_ERROR) {
+      pdcp_cfg->t_reordering_present = false;
+    } else {
+      pdcp_cfg->t_reordering_present = true;
+    }
+
+    // Parse RLC section
+    if (!q.exists("rlc_config")) {
+      fprintf(stderr, "Error section rlc_config not found for 5qi=%d\n", five_qi);
+      return SRSRAN_ERROR;
+    }
+    libconfig::Setting&      rlc     = q["rlc_config"];
+    asn1::rrc_nr::rlc_cfg_c* rlc_cfg = &five_qi_cfg.rlc_cfg;
+    if (rlc.exists("um_uni_dir_ul") || rlc.exists("um_uni_dir_dl")) {
+      // Sanity check: RLC UM uni-directional is not supported.
+      fprintf(stderr, "Error uni-directional UM not supported. 5QI=%d\n", five_qi);
+      return SRSRAN_ERROR;
+    }
+
+    if (rlc.exists("am")) {
+      rlc_cfg->set_am();
+    } else if (rlc.exists("um_bi_dir")) {
+      rlc_cfg->set_um_bi_dir();
+    } else {
+      fprintf(stderr, "Invalid combination of UL/DL UM/AM for 5QI=%d\n", five_qi);
+      return SRSRAN_ERROR;
+    }
+
+    // Parse RLC-AM section
+    if (rlc_cfg->type() == asn1::rrc_nr::rlc_cfg_c::types::am) {
+      libconfig::Setting&        rlc_am    = rlc["am"];
+      libconfig::Setting&        rlc_am_ul = rlc_am["ul_am"];
+      libconfig::Setting&        rlc_am_dl = rlc_am["dl_am"];
+      asn1::rrc_nr::ul_am_rlc_s& ul_am_cfg = rlc_cfg->am().ul_am_rlc;
+      asn1::rrc_nr::dl_am_rlc_s& dl_am_cfg = rlc_cfg->am().dl_am_rlc;
+
+      // RLC AM UL
+      // SN length
+      field_asn1_enum_number<asn1::rrc_nr::sn_field_len_am_e> rlc_sn_size_ul("sn_field_len", &ul_am_cfg.sn_field_len);
+      if (rlc_sn_size_ul.parse(rlc_am_ul) == SRSRAN_ERROR) {
+        ul_am_cfg.sn_field_len_present = false;
+      } else {
+        ul_am_cfg.sn_field_len_present = true;
+      }
+      // t-PollRetx
+      field_asn1_enum_number<asn1::rrc_nr::t_poll_retx_e> rlc_t_poll_retx("t_poll_retx", &ul_am_cfg.t_poll_retx);
+      rlc_t_poll_retx.parse(rlc_am_ul);
+      // pollPDU
+      field_asn1_enum_number<asn1::rrc_nr::poll_pdu_e> rlc_poll_pdu("poll_pdu", &ul_am_cfg.poll_pdu);
+      rlc_poll_pdu.parse(rlc_am_ul);
+      // pollBYTE
+      field_asn1_enum_number<asn1::rrc_nr::poll_byte_e> rlc_poll_bytes("poll_byte", &ul_am_cfg.poll_byte);
+      rlc_poll_bytes.parse(rlc_am_ul);
+      // maxRetxThreshold
+      field_asn1_enum_number<asn1::rrc_nr::ul_am_rlc_s::max_retx_thres_e_> rlc_max_retx_thres(
+          "max_retx_thres", &ul_am_cfg.max_retx_thres);
+      rlc_max_retx_thres.parse(rlc_am_ul);
+
+      // RLC AM DL
+      // SN length
+      field_asn1_enum_number<asn1::rrc_nr::sn_field_len_am_e> rlc_sn_size_dl("sn_field_len", &dl_am_cfg.sn_field_len);
+      if (rlc_sn_size_dl.parse(rlc_am_dl) == SRSRAN_ERROR) {
+        dl_am_cfg.sn_field_len_present = false;
+      } else {
+        dl_am_cfg.sn_field_len_present = true;
+      }
+      // t-reassembly
+      field_asn1_enum_number<asn1::rrc_nr::t_reassembly_e> rlc_t_reassembly("t_reassembly", &dl_am_cfg.t_reassembly);
+      rlc_t_reassembly.parse(rlc_am_dl);
+      // t-statusProhibit
+      field_asn1_enum_number<asn1::rrc_nr::t_status_prohibit_e> rlc_status_prohibit("t_status_prohibit",
+                                                                                    &dl_am_cfg.t_status_prohibit);
+      rlc_status_prohibit.parse(rlc_am_dl);
+    } else if (rlc_cfg->type() == asn1::rrc_nr::rlc_cfg_c::types::um_bi_dir) {
+      libconfig::Setting&        rlc_um    = rlc["um_bi_dir"];
+      libconfig::Setting&        rlc_um_ul = rlc_um["ul_um"];
+      libconfig::Setting&        rlc_um_dl = rlc_um["dl_um"];
+      asn1::rrc_nr::ul_um_rlc_s& ul_um_cfg = rlc_cfg->um_bi_dir().ul_um_rlc;
+      asn1::rrc_nr::dl_um_rlc_s& dl_um_cfg = rlc_cfg->um_bi_dir().dl_um_rlc;
+
+      // RLC UM UL
+      // SN field length
+      field_asn1_enum_number<asn1::rrc_nr::sn_field_len_um_e> rlc_sn_size_ul("sn_field_len", &ul_um_cfg.sn_field_len);
+      if (rlc_sn_size_ul.parse(rlc_um_ul) == SRSRAN_ERROR) {
+        ul_um_cfg.sn_field_len_present = false;
+      } else {
+        ul_um_cfg.sn_field_len_present = true;
+      }
+
+      // RLC UM DL
+      // SN field length
+      field_asn1_enum_number<asn1::rrc_nr::sn_field_len_um_e> rlc_sn_size_dl("sn_field_len", &dl_um_cfg.sn_field_len);
+      if (rlc_sn_size_dl.parse(rlc_um_dl) == SRSRAN_ERROR) {
+        dl_um_cfg.sn_field_len_present = false;
+      } else {
+        dl_um_cfg.sn_field_len_present = true;
+      }
+      // t-reassembly
+      field_asn1_enum_number<asn1::rrc_nr::t_reassembly_e> rlc_t_reassembly_dl("t_reassembly", &dl_um_cfg.t_reassembly);
+      rlc_t_reassembly_dl.parse(rlc_um_dl);
+    }
+
+    cfg.insert(std::make_pair(five_qi, five_qi_cfg));
+  }
+  return 0;
+}
 namespace rr_sections {
 
 int parse_rr(all_args_t* args_, rrc_cfg_t* rrc_cfg_, rrc_nr_cfg_t* rrc_nr_cfg_)
@@ -784,6 +1341,7 @@ static int parse_meas_cell_list(rrc_meas_cfg_t* meas_cfg, Setting& root)
     parse_default_field(cell.allowed_meas_bw, root[i], "allowed_meas_bw", 6u);
     asn1_parsers::default_number_to_enum(
         cell.cell_individual_offset, root[i], "cell_individual_offset", asn1::rrc::q_offset_range_opts::db0);
+    parse_default_field(cell.tac, root[i], "tac", -1);
     srsran_assert(srsran::is_lte_cell_nof_prb(cell.allowed_meas_bw), "Invalid measurement Bandwidth");
   }
   return 0;
@@ -853,8 +1411,35 @@ static int parse_meas_report_desc(rrc_meas_cfg_t* meas_cfg, Setting& cellroot)
               rrc_value_to_range(srsran::quant_rsrq, (int)root[i]["a4_thresh"]);
         }
         break;
+      case 5:
+        // a5-threshold1
+        if (!root[i].exists("a5_thresh1")) {
+          ERROR("Missing a5_thresh1 field for A5 event\n");
+          return SRSRAN_ERROR;
+        }
+        if (meas_item.trigger_quant == report_cfg_eutra_s::trigger_quant_opts::rsrp) {
+          event.event_id.set_event_a5().a5_thres1.set_thres_rsrp() =
+              rrc_value_to_range(srsran::quant_rsrp, (int)root[i]["a5_thresh1"]);
+        } else {
+          event.event_id.set_event_a5().a5_thres1.set_thres_rsrq() =
+              rrc_value_to_range(srsran::quant_rsrq, (int)root[i]["a5_thresh1"]);
+        }
+
+        // a5-threshold2
+        if (!root[i].exists("a5_thresh2")) {
+          ERROR("Missing a5_thresh2 field for A5 event\n");
+          return SRSRAN_ERROR;
+        }
+        if (meas_item.trigger_quant == report_cfg_eutra_s::trigger_quant_opts::rsrp) {
+          event.event_id.set_event_a5().a5_thres2.set_thres_rsrp() =
+              rrc_value_to_range(srsran::quant_rsrp, (int)root[i]["a5_thresh2"]);
+        } else {
+          event.event_id.set_event_a5().a5_thres2.set_thres_rsrq() =
+              rrc_value_to_range(srsran::quant_rsrq, (int)root[i]["a5_thresh2"]);
+        }
+        break;
       default:
-        ERROR("Invalid or unsupported event A%d in meas_report_desc (only A1-A4 are supported)\n",
+        ERROR("Invalid or unsupported event A%d in meas_report_desc (only A1-A5 are supported)\n",
               (int)root[i]["eventA"]);
         return SRSRAN_ERROR;
     }
@@ -906,6 +1491,7 @@ static int parse_cell_list(all_args_t* args, rrc_cfg_t* rrc_cfg, Setting& root)
     HANDLEPARSERCODE(parse_required_field(cell_cfg.cell_id, cellroot, "cell_id"));
     HANDLEPARSERCODE(parse_required_field(cell_cfg.tac, cellroot, "tac"));
     HANDLEPARSERCODE(parse_required_field(cell_cfg.pci, cellroot, "pci"));
+    parse_default_field(cell_cfg.tx_gain, cellroot, "tx_gain", 0.0);
     cell_cfg.pci = cell_cfg.pci % SRSRAN_NUM_PCI;
     HANDLEPARSERCODE(parse_required_field(cell_cfg.dl_earfcn, cellroot, "dl_earfcn"));
     parse_default_field(cell_cfg.dl_freq_hz, cellroot, "dl_freq", 0.0); // will be derived from DL EARFCN If not set
@@ -940,6 +1526,10 @@ static int parse_cell_list(all_args_t* args, rrc_cfg_t* rrc_cfg, Setting& root)
       HANDLEPARSERCODE(parse_meas_report_desc(&cell_cfg.meas_cfg, cellroot));
     }
 
+    if (cellroot.exists("barred") and cellroot["barred"]) {
+      cell_cfg.barred = true;
+    }
+
     if (cellroot.exists("scell_list")) {
       HANDLEPARSERCODE(parse_scell_list(cell_cfg, cellroot));
     }
@@ -948,7 +1538,16 @@ static int parse_cell_list(all_args_t* args, rrc_cfg_t* rrc_cfg, Setting& root)
   }
 
   // Configuration check
+  // counter for every RF port used by the eNB to avoid misconfiguration/mapping of cells
+  uint32_t next_rf_port = 0;
   for (auto it = rrc_cfg->cell_list.begin(); it != rrc_cfg->cell_list.end(); it++) {
+    // Make sure RF ports are assigned in order
+    if (it->rf_port != next_rf_port) {
+      ERROR("RF ports need to be in order starting with 0 (%d != %d)", it->rf_port, next_rf_port);
+      return SRSRAN_ERROR;
+    }
+    next_rf_port++;
+
     for (auto it2 = it + 1; it2 != rrc_cfg->cell_list.end(); it2++) {
       // Check RF port is not repeated
       if (it->rf_port == it2->rf_port) {
@@ -970,13 +1569,16 @@ static int parse_cell_list(all_args_t* args, rrc_cfg_t* rrc_cfg, Setting& root)
 static int parse_nr_cell_list(all_args_t* args, rrc_nr_cfg_t* rrc_cfg_nr, rrc_cfg_t* rrc_cfg_eutra, Setting& root)
 {
   for (uint32_t n = 0; n < (uint32_t)root.getLength(); ++n) {
+    auto& cellroot = root[n];
+
     rrc_cell_cfg_nr_t cell_cfg = {};
-    auto&             cellroot = root[n];
+    generate_default_nr_cell(cell_cfg);
 
     parse_opt_field(cell_cfg.phy_cell.rf_port, cellroot, "rf_port");
     HANDLEPARSERCODE(parse_required_field(cell_cfg.phy_cell.carrier.pci, cellroot, "pci"));
     HANDLEPARSERCODE(parse_required_field(cell_cfg.phy_cell.cell_id, cellroot, "cell_id"));
-    HANDLEPARSERCODE(parse_required_field(cell_cfg.phy_cell.root_seq_idx, cellroot, "root_seq_idx"));
+    HANDLEPARSERCODE(parse_opt_field(cell_cfg.coreset0_idx, cellroot, "coreset0_idx"));
+    HANDLEPARSERCODE(parse_required_field(cell_cfg.prach_root_seq_idx, cellroot, "root_seq_idx"));
     HANDLEPARSERCODE(parse_required_field(cell_cfg.tac, cellroot, "tac"));
 
     cell_cfg.phy_cell.carrier.pci = cell_cfg.phy_cell.carrier.pci % SRSRAN_NOF_NID_NR;
@@ -992,8 +1594,17 @@ static int parse_nr_cell_list(all_args_t* args, rrc_nr_cfg_t* rrc_cfg_nr, rrc_cf
 
   srsran::srsran_band_helper band_helper;
   // Configuration check
+  // counter for every RF port used by the eNB to avoid misconfiguration/mapping of cells
+  uint32_t next_rf_port = rrc_cfg_eutra->cell_list.size();
   for (auto it = rrc_cfg_nr->cell_list.begin(); it != rrc_cfg_nr->cell_list.end(); ++it) {
-    // check against NR cells
+    // Make sure RF ports are assigned in order
+    if (it->phy_cell.rf_port != next_rf_port) {
+      ERROR("RF ports need to be in order starting with 0 (%d != %d)", it->phy_cell.rf_port, next_rf_port);
+      return SRSRAN_ERROR;
+    }
+    next_rf_port++;
+
+    // check against other NR cells
     for (auto it2 = it + 1; it2 != rrc_cfg_nr->cell_list.end(); it2++) {
       // Check RF port is not repeated
       if (it->phy_cell.rf_port == it2->phy_cell.rf_port) {
@@ -1050,9 +1661,9 @@ static int parse_nr_cell_list(all_args_t* args, rrc_nr_cfg_t* rrc_cfg_nr, rrc_cf
     if (it->ul_arfcn != 0) {
       // Check if ul_arfcn is valid for the given band
       bool                  ul_arfcn_valid = false;
-      std::vector<uint32_t> bands          = band_helper.get_bands_nr(it->ul_arfcn);
-      for (uint32_t band_idx = 0; band_idx < bands.size(); band_idx++) {
-        if (bands.at(band_idx) == it->band) {
+      std::vector<uint32_t> ul_bands       = band_helper.get_bands_nr(it->ul_arfcn);
+      for (uint32_t band_idx = 0; band_idx < ul_bands.size(); band_idx++) {
+        if (ul_bands.at(band_idx) == it->band) {
           ul_arfcn_valid = true;
         }
       }
@@ -1113,6 +1724,30 @@ int parse_cell_cfg(all_args_t* args_, srsran_cell_t* cell)
   return SRSRAN_SUCCESS;
 }
 
+// Parse the relevant CFR configuration params
+int parse_cfr_args(all_args_t* args, srsran_cfr_cfg_t* cfr_config)
+{
+  cfr_config->cfr_enable  = args->phy.cfr_args.enable;
+  cfr_config->cfr_mode    = args->phy.cfr_args.mode;
+  cfr_config->alpha       = args->phy.cfr_args.strength;
+  cfr_config->manual_thr  = args->phy.cfr_args.manual_thres;
+  cfr_config->max_papr_db = args->phy.cfr_args.auto_target_papr;
+  cfr_config->ema_alpha   = args->phy.cfr_args.ema_alpha;
+
+  if (!srsran_cfr_params_valid(cfr_config)) {
+    fprintf(stderr,
+            "Invalid CFR parameters: cfr_mode=%d, alpha=%.2f, manual_thr=%.2f, \n "
+            "max_papr_db=%.2f, ema_alpha=%.2f\n",
+            cfr_config->cfr_mode,
+            cfr_config->alpha,
+            cfr_config->manual_thr,
+            cfr_config->max_papr_db,
+            cfr_config->ema_alpha);
+    return SRSRAN_ERROR;
+  }
+  return SRSRAN_SUCCESS;
+}
+
 int parse_cfg_files(all_args_t* args_, rrc_cfg_t* rrc_cfg_, rrc_nr_cfg_t* rrc_nr_cfg_, phy_cfg_t* phy_cfg_)
 {
   // Parse config files
@@ -1158,16 +1793,31 @@ int parse_cfg_files(all_args_t* args_, rrc_cfg_t* rrc_cfg_, rrc_nr_cfg_t* rrc_nr
   }
 
   try {
-    if (drb_sections::parse_drb(args_, rrc_cfg_) != SRSRAN_SUCCESS) {
-      fprintf(stderr, "Error parsing DRB configuration\n");
+    if (rb_sections::parse_rb(args_, rrc_cfg_, rrc_nr_cfg_) != SRSRAN_SUCCESS) {
+      fprintf(stderr, "Error parsing RB configuration\n");
       return SRSRAN_ERROR;
     }
   } catch (const SettingTypeException& stex) {
-    fprintf(stderr, "Error parsing DRB configuration: %s\n", stex.getPath());
+    fprintf(stderr, "Error parsing RB configuration: %s\n", stex.getPath());
     return SRSRAN_ERROR;
   } catch (const ConfigException& cex) {
-    fprintf(stderr, "Error parsing DRB configuration\n");
+    fprintf(stderr, "Error parsing RB configuration\n");
     return SRSRAN_ERROR;
+  }
+
+  // update number of NR cells
+  rrc_cfg_->num_nr_cells = rrc_nr_cfg_->cell_list.size();
+  args_->rf.nof_carriers = rrc_cfg_->cell_list.size() + rrc_nr_cfg_->cell_list.size();
+  ASSERT_VALID_CFG(args_->rf.nof_carriers > 0, "There must be at least one NR or LTE cell");
+  if (rrc_nr_cfg_->cell_list.size() > 0) {
+    // NR cells available.
+    if (rrc_cfg_->cell_list.size() == 0) {
+      // SA mode.
+      rrc_nr_cfg_->is_standalone = true;
+    } else {
+      // NSA mode.
+      rrc_nr_cfg_->is_standalone = false;
+    }
   }
 
   // Set fields derived from others, and check for correctness of the parsed configuration
@@ -1183,17 +1833,44 @@ int parse_cfg_files(all_args_t* args_, rrc_cfg_t* rrc_cfg_, rrc_nr_cfg_t* rrc_nr
   }
 
   // update number of NR cells
-  rrc_cfg_->num_nr_cells = rrc_nr_cfg_->cell_list.size();
-  args_->rf.nof_carriers = rrc_cfg_->cell_list.size() + rrc_nr_cfg_->cell_list.size();
+  if (rrc_nr_cfg_->cell_list.size() > 0) {
+    // NR cells available.
+    if (rrc_nr_cfg_->is_standalone) {
+      // SA mode. Update NGAP args
+      args_->nr_stack.ngap.cell_id = rrc_nr_cfg_->cell_list[0].phy_cell.cell_id;
+      args_->nr_stack.ngap.tac     = rrc_nr_cfg_->cell_list[0].tac;
+      // take equivalent S1AP params to update NGAP params
+      args_->nr_stack.ngap.gnb_name           = args_->stack.s1ap.enb_name;
+      args_->nr_stack.ngap.gnb_id             = args_->enb.enb_id;
+      args_->nr_stack.ngap.mcc                = args_->stack.s1ap.mcc;
+      args_->nr_stack.ngap.mnc                = args_->stack.s1ap.mnc;
+      args_->nr_stack.ngap.gtp_bind_addr      = args_->stack.s1ap.gtp_bind_addr;
+      args_->nr_stack.ngap.gtp_advertise_addr = args_->stack.s1ap.gtp_advertise_addr;
+      args_->nr_stack.ngap.amf_addr           = args_->stack.s1ap.mme_addr;
+      args_->nr_stack.ngap.ngc_bind_addr      = args_->stack.s1ap.gtp_bind_addr;
 
-  // update EUTRA RRC params for ENDC
-  if (rrc_nr_cfg_->cell_list.size() == 1) {
-    rrc_cfg_->endc_cfg.abs_frequency_ssb = rrc_nr_cfg_->cell_list.at(0).ssb_absolute_freq_point;
-    rrc_cfg_->endc_cfg.nr_band           = rrc_nr_cfg_->cell_list.at(0).band;
-    rrc_cfg_->endc_cfg.ssb_period_offset.set_sf10_r15();
-    rrc_cfg_->endc_cfg.ssb_duration      = asn1::rrc::mtc_ssb_nr_r15_s::ssb_dur_r15_opts::sf1;
-    rrc_cfg_->endc_cfg.ssb_ssc           = asn1::rrc::rs_cfg_ssb_nr_r15_s::subcarrier_spacing_ssb_r15_opts::khz15;
-    rrc_cfg_->endc_cfg.act_from_b1_event = true; // ENDC will only be activated from B1 measurment
+      // Parse NIA/NEA preference list (use same as LTE for now)
+      for (uint32_t i = 0; i < rrc_cfg_->eea_preference_list.size(); i++) {
+        rrc_nr_cfg_->nea_preference_list[i] = (srsran::CIPHERING_ALGORITHM_ID_NR_ENUM)rrc_cfg_->eea_preference_list[i];
+        rrc_nr_cfg_->nia_preference_list[i] = (srsran::INTEGRITY_ALGORITHM_ID_NR_ENUM)rrc_cfg_->eia_preference_list[i];
+      }
+
+    } else {
+      // NSA mode.
+      // update EUTRA RRC params for ENDC
+      rrc_cfg_->endc_cfg.abs_frequency_ssb = rrc_nr_cfg_->cell_list.at(0).ssb_absolute_freq_point;
+      rrc_cfg_->endc_cfg.nr_band           = rrc_nr_cfg_->cell_list.at(0).band;
+      rrc_cfg_->endc_cfg.ssb_period_offset.set_sf10_r15();
+      rrc_cfg_->endc_cfg.ssb_duration      = asn1::rrc::mtc_ssb_nr_r15_s::ssb_dur_r15_opts::sf1;
+      rrc_cfg_->endc_cfg.ssb_ssc           = asn1::rrc::rs_cfg_ssb_nr_r15_s::subcarrier_spacing_ssb_r15_opts::khz15;
+      rrc_cfg_->endc_cfg.act_from_b1_event = true; // ENDC will only be activated from B1 measurment
+    }
+  }
+
+  // Parse CFR args
+  if (parse_cfr_args(args_, &phy_cfg_->cfr_config) < SRSRAN_SUCCESS) {
+    fprintf(stderr, "Error parsing CFR configuration\n");
+    return SRSRAN_ERROR;
   }
 
   return SRSRAN_SUCCESS;
@@ -1202,51 +1879,53 @@ int parse_cfg_files(all_args_t* args_, rrc_cfg_t* rrc_cfg_, rrc_nr_cfg_t* rrc_nr
 int set_derived_args(all_args_t* args_, rrc_cfg_t* rrc_cfg_, phy_cfg_t* phy_cfg_, const srsran_cell_t& cell_cfg_)
 {
   // Sanity checks
-  ASSERT_VALID_CFG(not rrc_cfg_->cell_list.empty(), "No cell specified in rr.conf.");
   ASSERT_VALID_CFG(args_->stack.mac.nof_prealloc_ues <= SRSENB_MAX_UES,
                    "mac.nof_prealloc_ues=%d must be within [0, %d]",
                    args_->stack.mac.nof_prealloc_ues,
                    SRSENB_MAX_UES);
 
-  // Check for a forced  DL EARFCN or frequency (only valid for a single cell config (Xico's favorite feature))
-  if (rrc_cfg_->cell_list.size() == 1) {
-    auto& cfg = rrc_cfg_->cell_list.at(0);
-    if (args_->enb.dl_earfcn > 0 and args_->enb.dl_earfcn != cfg.dl_earfcn) {
-      cfg.dl_earfcn = args_->enb.dl_earfcn;
-      ERROR("Force DL EARFCN for cell PCI=%d to %d", cfg.pci, cfg.dl_earfcn);
+  // Check for a forced  DL EARFCN or frequency (only valid for a single cell config
+  if (rrc_cfg_->cell_list.size() > 0) {
+    if (rrc_cfg_->cell_list.size() == 1) {
+      auto& cfg = rrc_cfg_->cell_list.at(0);
+      if (args_->enb.dl_earfcn > 0 and args_->enb.dl_earfcn != cfg.dl_earfcn) {
+        cfg.dl_earfcn = args_->enb.dl_earfcn;
+        ERROR("Force DL EARFCN for cell PCI=%d to %d", cfg.pci, cfg.dl_earfcn);
+      }
+      if (args_->rf.dl_freq > 0) {
+        cfg.dl_freq_hz = args_->rf.dl_freq;
+        ERROR("Force DL freq for cell PCI=%d to %f MHz", cfg.pci, cfg.dl_freq_hz / 1e6f);
+      }
+      if (args_->rf.ul_freq > 0) {
+        cfg.ul_freq_hz = args_->rf.ul_freq;
+        ERROR("Force UL freq for cell PCI=%d to %f MHz", cfg.pci, cfg.ul_freq_hz / 1e6f);
+      }
+    } else {
+      // If more than one cell is defined, single EARFCN or DL freq will be ignored
+      if (args_->enb.dl_earfcn > 0 || args_->rf.dl_freq > 0) {
+        INFO("Multiple cells defined in rr.conf. Ignoring single EARFCN and/or frequency config.");
+      }
     }
-    if (args_->rf.dl_freq > 0) {
-      cfg.dl_freq_hz = args_->rf.dl_freq;
-      ERROR("Force DL freq for cell PCI=%d to %f MHz", cfg.pci, cfg.dl_freq_hz / 1e6f);
-    }
-    if (args_->rf.ul_freq > 0) {
-      cfg.ul_freq_hz = args_->rf.ul_freq;
-      ERROR("Force UL freq for cell PCI=%d to %f MHz", cfg.pci, cfg.ul_freq_hz / 1e6f);
-    }
-  } else {
-    // If more than one cell is defined, single EARFCN or DL freq will be ignored
-    if (args_->enb.dl_earfcn > 0 || args_->rf.dl_freq > 0) {
-      INFO("Multiple cells defined in rr.conf. Ignoring single EARFCN and/or frequency config.");
-    }
+
+    // set config for RRC's base cell
+    rrc_cfg_->cell = cell_cfg_;
+
+    // Set S1AP related params from cell list
+    args_->stack.s1ap.enb_id  = args_->enb.enb_id;
+    args_->stack.s1ap.cell_id = rrc_cfg_->cell_list.at(0).cell_id;
+    args_->stack.s1ap.tac     = rrc_cfg_->cell_list.at(0).tac;
   }
-
-  // set config for RRC's base cell
-  rrc_cfg_->cell = cell_cfg_;
-
-  // Set S1AP related params from cell list
-  args_->stack.s1ap.enb_id  = args_->enb.enb_id;
-  args_->stack.s1ap.cell_id = rrc_cfg_->cell_list.at(0).cell_id;
-  args_->stack.s1ap.tac     = rrc_cfg_->cell_list.at(0).tac;
 
   // Create dedicated cell configuration from RRC configuration
   for (auto it = rrc_cfg_->cell_list.begin(); it != rrc_cfg_->cell_list.end(); ++it) {
-    auto&          cfg          = *it;
+    cell_cfg_t&    cfg          = *it;
     phy_cell_cfg_t phy_cell_cfg = {};
     phy_cell_cfg.cell           = cell_cfg_;
     phy_cell_cfg.cell.id        = cfg.pci;
     phy_cell_cfg.cell_id        = cfg.cell_id;
     phy_cell_cfg.root_seq_idx   = cfg.root_seq_idx;
     phy_cell_cfg.rf_port        = cfg.rf_port;
+    phy_cell_cfg.gain_db        = cfg.tx_gain;
     phy_cell_cfg.num_ra_preambles =
         rrc_cfg_->sibs[1].sib2().rr_cfg_common.rach_cfg_common.preamb_info.nof_ra_preambs.to_number();
 
@@ -1285,6 +1964,13 @@ int set_derived_args(all_args_t* args_, rrc_cfg_t* rrc_cfg_, phy_cfg_t* phy_cfg_
         return SRSRAN_ERROR;
       } else {
         scell_it++;
+      }
+    }
+
+    for (meas_cell_cfg_t& meas_cell : cfg.meas_cfg.meas_cells) {
+      if (meas_cell.tac < 0) {
+        // if meas cell TAC was not set, use current cell TAC.
+        meas_cell.tac = cfg.tac;
       }
     }
 
@@ -1452,60 +2138,6 @@ int set_derived_args(all_args_t* args_, rrc_cfg_t* rrc_cfg_, phy_cfg_t* phy_cfg_
  */
 int set_derived_args_nr(all_args_t* args_, rrc_nr_cfg_t* rrc_nr_cfg_, phy_cfg_t* phy_cfg_)
 {
-  // set rach cfg common
-  auto& rach_cfg_common  = rrc_nr_cfg_->rach_cfg_common;
-  auto& rach_cfg_generic = rach_cfg_common.rach_cfg_generic;
-
-  uint8_t msg1_fdm = 1; // TODO read from config
-  if (!asn1::number_to_enum(rach_cfg_generic.msg1_fdm, msg1_fdm)) {
-    ERROR("Config Error: Invalid msg1_fdm (%d)\n", msg1_fdm);
-    return SRSRAN_ERROR;
-  }
-
-  rach_cfg_generic.preamb_rx_target_pwr = -110; // TODO read from config
-
-  uint8_t preamb_trans_max = 7; // TODO read from config
-  if (!asn1::number_to_enum(rach_cfg_generic.preamb_trans_max, preamb_trans_max)) {
-    ERROR("Config Error: Invalid preamble_trans_max (%d)\n", preamb_trans_max);
-    return SRSRAN_ERROR;
-  }
-
-  uint8_t pwr_ramp_step = 4; // TODO read from config
-  if (!asn1::number_to_enum(rach_cfg_generic.pwr_ramp_step, pwr_ramp_step)) {
-    ERROR("Config Error: Invalid pwr_ramp_step (%d)\n", pwr_ramp_step);
-    return SRSRAN_ERROR;
-  }
-
-  uint8_t ra_resp_win_size = 10; // TODO read from config
-  if (!asn1::number_to_enum(rach_cfg_generic.ra_resp_win, ra_resp_win_size)) {
-    ERROR("Config Error: Invalid ra_resp_win_size (%d)\n", ra_resp_win_size);
-    return SRSRAN_ERROR;
-  }
-
-  uint8_t ra_contention_resolution_timer = 64; // TODO read from config
-  if (!asn1::number_to_enum(rach_cfg_common.ra_contention_resolution_timer, ra_contention_resolution_timer)) {
-    ERROR("Config Error: Invalid mac_con_res_timer (%d)\n", ra_contention_resolution_timer);
-    return SRSRAN_ERROR;
-  }
-
-  rrc_nr_cfg_->prach_root_seq_idx_type = 839; // TODO read from config
-
-  std::string restricted_set_cfg = "unrestrictedSet"; // TODO read from config
-  asn1::rrc_nr::rach_cfg_common_s::prach_root_seq_idx_c_::types_opts root_seq_idx_type;
-  if (!asn1::string_to_enum(rach_cfg_common.restricted_set_cfg, restricted_set_cfg)) {
-    ERROR("Config Error: Invalid restricted_set_cfg (%s)\n", restricted_set_cfg.c_str());
-    return SRSRAN_ERROR;
-  }
-
-  rach_cfg_common.ssb_per_rach_occasion_and_cb_preambs_per_ssb_present = true;
-  rach_cfg_common.ssb_per_rach_occasion_and_cb_preambs_per_ssb.set_one(); // TODO read from config
-
-  uint8_t one_opts = 64; // TODO read from config
-  if (!asn1::number_to_enum(rach_cfg_common.ssb_per_rach_occasion_and_cb_preambs_per_ssb.one(), one_opts)) {
-    ERROR("Config Error: Invalid one_opts (%d)\n", one_opts);
-    return SRSRAN_ERROR;
-  }
-
   // Use helper class to derive NR carrier parameters
   srsran::srsran_band_helper band_helper;
 
@@ -1515,9 +2147,10 @@ int set_derived_args_nr(all_args_t* args_, rrc_nr_cfg_t* rrc_nr_cfg_, phy_cfg_t*
     return SRSRAN_ERROR;
   }
 
+  rrc_nr_cfg_->inactivity_timeout_ms = args_->general.rrc_inactivity_timer;
+
   // Create NR dedicated cell configuration from RRC configuration
-  for (auto it = rrc_nr_cfg_->cell_list.begin(); it != rrc_nr_cfg_->cell_list.end(); ++it) {
-    auto& cfg                            = *it;
+  for (auto& cfg : rrc_nr_cfg_->cell_list) {
     cfg.phy_cell.carrier.max_mimo_layers = args_->enb.nof_ports;
 
     // NR cells have the same bandwidth as EUTRA cells, adjust PRB sizes
@@ -1535,128 +2168,38 @@ int set_derived_args_nr(all_args_t* args_, rrc_nr_cfg_t* rrc_nr_cfg_, phy_cfg_t*
         ERROR("The only accepted number of PRB is: 25, 50, 100");
         return SRSRAN_ERROR;
     }
+
     // phy_cell_cfg.root_seq_idx = cfg.root_seq_idx;
-    cfg.phy_cell.num_ra_preambles = 52; // FIXME: read from config
-
-    if (cfg.phy_cell.dl_freq_hz == 0) {
-      cfg.phy_cell.dl_freq_hz = band_helper.nr_arfcn_to_freq(cfg.dl_arfcn);
-    }
-
-    if (cfg.phy_cell.ul_freq_hz == 0) {
-      // auto-detect UL frequency
-      if (cfg.ul_arfcn == 0) {
-        // derive UL ARFCN from given DL ARFCN
-        cfg.ul_arfcn = band_helper.get_ul_arfcn_from_dl_arfcn(cfg.dl_arfcn);
-        if (cfg.ul_arfcn == 0) {
-          ERROR("Can't derive UL ARFCN from DL ARFCN %d", cfg.dl_arfcn);
-          return SRSRAN_ERROR;
-        }
-      }
-      cfg.phy_cell.ul_freq_hz = band_helper.nr_arfcn_to_freq(cfg.ul_arfcn);
-    }
-
-    // duplex mode
-    cfg.duplex_mode = band_helper.get_duplex_mode(cfg.band);
-
-    // PRACH
-    cfg.phy_cell.prach.is_nr                 = true;
-    cfg.phy_cell.prach.config_idx            = 8;
-    cfg.phy_cell.prach.root_seq_idx          = 0;
-    cfg.phy_cell.prach.freq_offset           = 1;
-    cfg.phy_cell.prach.num_ra_preambles      = cfg.phy_cell.num_ra_preambles;
-    cfg.phy_cell.prach.hs_flag               = phy_cfg_->prach_cnfg.prach_cfg_info.high_speed_flag;
-    cfg.phy_cell.prach.tdd_config.configured = (cfg.duplex_mode == SRSRAN_DUPLEX_MODE_TDD);
-
-    // PDCCH
-    // Configure CORESET ID 1
-    cfg.phy_cell.pdcch.coreset_present[1]              = true;
-    cfg.phy_cell.pdcch.coreset[1].id                   = 1;
-    cfg.phy_cell.pdcch.coreset[1].duration             = 1;
-    cfg.phy_cell.pdcch.coreset[1].mapping_type         = srsran_coreset_mapping_type_non_interleaved;
-    cfg.phy_cell.pdcch.coreset[1].precoder_granularity = srsran_coreset_precoder_granularity_reg_bundle;
-
-    // Generate frequency resources for the full BW
-    for (uint32_t i = 0; i < SRSRAN_CORESET_FREQ_DOMAIN_RES_SIZE; i++) {
-      cfg.phy_cell.pdcch.coreset[1].freq_resources[i] = i < SRSRAN_FLOOR(cfg.phy_cell.carrier.nof_prb, 6);
-    }
-
-    // Configure Search Space 1 as common
-    cfg.phy_cell.pdcch.search_space_present[1]     = true;
-    cfg.phy_cell.pdcch.search_space[1].id          = 1;
-    cfg.phy_cell.pdcch.search_space[1].coreset_id  = 1;
-    cfg.phy_cell.pdcch.search_space[1].duration    = 1;
-    cfg.phy_cell.pdcch.search_space[1].formats[0]  = srsran_dci_format_nr_0_0; // DCI format for PUSCH
-    cfg.phy_cell.pdcch.search_space[1].formats[1]  = srsran_dci_format_nr_1_0; // DCI format for PDSCH
-    cfg.phy_cell.pdcch.search_space[1].nof_formats = 2;
-    cfg.phy_cell.pdcch.search_space[1].type        = srsran_search_space_type_common_3;
-
-    // Generate 1 candidate for each aggregation level if possible
-    for (uint32_t L = 0; L < SRSRAN_SEARCH_SPACE_NOF_AGGREGATION_LEVELS_NR; L++) {
-      cfg.phy_cell.pdcch.search_space[1].nof_candidates[L] =
-          SRSRAN_MIN(2, srsran_pdcch_nr_max_candidates_coreset(&cfg.phy_cell.pdcch.coreset[1], L));
-    }
-
-    cfg.phy_cell.pdcch.ra_search_space_present = true;
-    cfg.phy_cell.pdcch.ra_search_space         = cfg.phy_cell.pdcch.search_space[1];
-    cfg.phy_cell.pdcch.ra_search_space.type    = srsran_search_space_type_common_1;
 
     // PDSCH
-    cfg.phy_cell.pdsch.rs_power = phy_cfg_->pdsch_cnfg.ref_sig_pwr;
-    cfg.phy_cell.pdsch.p_b      = phy_cfg_->pdsch_cnfg.p_b;
+    cfg.pdsch_rs_power = phy_cfg_->pdsch_cnfg.ref_sig_pwr;
+  }
+  rrc_nr_cfg_->enb_id = args_->enb.enb_id;
+  rrc_nr_cfg_->mcc    = args_->stack.s1ap.mcc;
+  rrc_nr_cfg_->mnc    = args_->stack.s1ap.mnc;
 
-    // copy center frequencies
-    cfg.phy_cell.carrier.dl_center_frequency_hz = cfg.phy_cell.dl_freq_hz;
-    cfg.phy_cell.carrier.ul_center_frequency_hz = cfg.phy_cell.ul_freq_hz;
+  // Derive cross-dependent cell params
+  if (set_derived_nr_rrc_params(*rrc_nr_cfg_) != SRSRAN_SUCCESS) {
+    ERROR("Failed to derive NR cell params.");
+    return SRSRAN_ERROR;
+  }
 
-    cfg.dl_absolute_freq_point_a = band_helper.get_abs_freq_point_a_arfcn(cfg.phy_cell.carrier.nof_prb, cfg.dl_arfcn);
-    cfg.ul_absolute_freq_point_a = band_helper.get_abs_freq_point_a_arfcn(cfg.phy_cell.carrier.nof_prb, cfg.ul_arfcn);
-
-    // Calculate SSB params depending on band/duplex
-    cfg.ssb_cfg.duplex_mode = band_helper.get_duplex_mode(cfg.band);
-    cfg.ssb_cfg.pattern     = band_helper.get_ssb_pattern(cfg.band, srsran_subcarrier_spacing_15kHz);
-    if (cfg.ssb_cfg.pattern == SRSRAN_SSB_PATTERN_A) {
-      // 15kHz SSB SCS
-      cfg.ssb_cfg.scs = srsran_subcarrier_spacing_15kHz;
-    } else {
-      // try to optain SSB pattern for same band with 30kHz SCS
-      cfg.ssb_cfg.pattern = band_helper.get_ssb_pattern(cfg.band, srsran_subcarrier_spacing_30kHz);
-      if (cfg.ssb_cfg.pattern == SRSRAN_SSB_PATTERN_B || cfg.ssb_cfg.pattern == SRSRAN_SSB_PATTERN_C) {
-        // SSB SCS is 30 kHz
-        cfg.ssb_cfg.scs = srsran_subcarrier_spacing_30kHz;
-      } else {
-        ERROR("Can't derive SSB pattern for band %d", cfg.band);
-        return SRSRAN_ERROR;
-      }
-    }
-
-    // fill remaining SSB fields
-    cfg.ssb_absolute_freq_point =
-        band_helper.get_abs_freq_ssb_arfcn(cfg.band, cfg.ssb_cfg.scs, cfg.dl_absolute_freq_point_a);
-    if (cfg.ssb_absolute_freq_point == 0) {
-      ERROR("Can't derive SSB freq point for dl_arfcn %d and band %d", cfg.dl_arfcn, cfg.band);
-      return SRSRAN_ERROR;
-    }
-
-    // Convert to frequency for PHY
-    cfg.phy_cell.carrier.ssb_center_freq_hz = band_helper.nr_arfcn_to_freq(cfg.ssb_absolute_freq_point);
-
-    cfg.ssb_cfg.center_freq_hz = cfg.phy_cell.carrier.dl_center_frequency_hz;
-    cfg.ssb_cfg.ssb_freq_hz    = cfg.phy_cell.carrier.ssb_center_freq_hz;
-    cfg.ssb_cfg.periodicity_ms = 10; // TODO: make a param
-    cfg.ssb_cfg.beta_pss       = 0.0;
-    cfg.ssb_cfg.beta_sss       = 0.0;
-    cfg.ssb_cfg.beta_pbch      = 0.0;
-    cfg.ssb_cfg.beta_pbch_dmrs = 0.0;
-    // set by PHY layer in worker_pool::set_common_cfg
-    cfg.ssb_cfg.srate_hz = 0.0;
-    cfg.ssb_cfg.scaling  = 0.0;
-
+  // Update PHY with RRC cell configs
+  for (auto& cfg : rrc_nr_cfg_->cell_list) {
     phy_cfg_->phy_cell_cfg_nr.push_back(cfg.phy_cell);
   }
 
   // MAC-NR PCAP options
   args_->nr_stack.mac.pcap.enable = args_->stack.mac_pcap.enable;
   args_->nr_stack.log             = args_->stack.log;
+
+  // Sanity check for unsupported/untested configuration
+  for (auto& cfg : rrc_nr_cfg_->cell_list) {
+    if (cfg.phy_cell.carrier.nof_prb != 52) {
+      ERROR("Only 10 MHz bandwidth supported.");
+      return SRSRAN_ERROR;
+    }
+  }
 
   return SRSRAN_SUCCESS;
 }
@@ -1675,6 +2218,13 @@ int parse_sib1(std::string filename, sib_type1_s* data)
   sib1.add_field(make_asn1_enum_str_parser("cell_barred", &data->cell_access_related_info.cell_barred));
   sib1.add_field(make_asn1_enum_number_parser("si_window_length", &data->si_win_len));
   sib1.add_field(new parser::field<uint8_t>("system_info_value_tag", &data->sys_info_value_tag));
+
+  // additional_plmns subsection uses a custom field class
+  parser::section additional_plmns("additional_plmns");
+  sib1.add_subsection(&additional_plmns);
+  bool dummy_bool = true;
+  additional_plmns.set_optional(&dummy_bool);
+  additional_plmns.add_field(new field_additional_plmns(&data->cell_access_related_info));
 
   // sched_info subsection uses a custom field class
   parser::section sched_info("sched_info");
@@ -1722,7 +2272,7 @@ int parse_sib2(std::string filename, sib_type2_s* data)
 
   acbarring_data.add_field(
       make_asn1_enum_number_str_parser("factor", &data->ac_barr_info.ac_barr_for_mo_data.ac_barr_factor));
-  acbarring_data.add_field(make_asn1_enum_number_parser("fime", &data->ac_barr_info.ac_barr_for_mo_data.ac_barr_time));
+  acbarring_data.add_field(make_asn1_enum_number_parser("time", &data->ac_barr_info.ac_barr_for_mo_data.ac_barr_time));
   acbarring_data.add_field(make_asn1_bitstring_number_parser(
       "for_special_ac", &data->ac_barr_info.ac_barr_for_mo_data.ac_barr_for_special_ac));
 
@@ -1959,12 +2509,62 @@ int parse_sib4(std::string filename, sib_type4_s* data)
   return parser::parse_section(std::move(filename), &sib4);
 }
 
+int parse_sib5(std::string filename, sib_type5_s* data)
+{
+  parser::section sib5("sib5");
+
+  // interFreqCarrierFreqList
+  parser::section inter_freq_carrier_freq_list("inter_freq_carrier_freq_list");
+  sib5.add_subsection(&inter_freq_carrier_freq_list);
+  bool dummy_bool = false;
+  inter_freq_carrier_freq_list.set_optional(&dummy_bool);
+  inter_freq_carrier_freq_list.add_field(new field_inter_freq_carrier_freq_list(data));
+
+  return parser::parse_section(std::move(filename), &sib5);
+}
+
+int parse_sib6(std::string filename, sib_type6_s* data)
+{
+  parser::section sib6("sib6");
+
+  // t-ReselectionUTRA
+  sib6.add_field(new parser::field<uint8>("t_resel_utra", &data->t_resel_utra));
+
+  // t-ReselectionUTRA-SF
+  parser::section t_resel_utra_sf("t_resel_utra_sf");
+  sib6.add_subsection(&t_resel_utra_sf);
+  t_resel_utra_sf.set_optional(&data->t_resel_utra_sf_present);
+  t_resel_utra_sf.add_field(make_asn1_enum_number_str_parser("sf_medium", &data->t_resel_utra_sf.sf_medium));
+  t_resel_utra_sf.add_field(make_asn1_enum_number_str_parser("sf_high", &data->t_resel_utra_sf.sf_high));
+
+  // carrierFreqListUTRA-FDD
+  parser::section carrier_freq_list_utra_fdd("carrier_freq_list_utra_fdd");
+  sib6.add_subsection(&carrier_freq_list_utra_fdd);
+  bool dummy_bool = false;
+  carrier_freq_list_utra_fdd.set_optional(&dummy_bool);
+  carrier_freq_list_utra_fdd.add_field(new field_carrier_freq_list_utra_fdd(data));
+
+  // carrierFreqListUTRA-TDD
+  parser::section carrier_freq_list_utra_tdd("carrier_freq_list_utra_tdd");
+  sib6.add_subsection(&carrier_freq_list_utra_tdd);
+  carrier_freq_list_utra_tdd.set_optional(&dummy_bool);
+  carrier_freq_list_utra_tdd.add_field(new field_carrier_freq_list_utra_tdd(data));
+
+  return parser::parse_section(std::move(filename), &sib6);
+}
+
 int parse_sib7(std::string filename, sib_type7_s* data)
 {
   parser::section sib7("sib7");
 
   sib7.add_field(new parser::field<uint8>("t_resel_geran", &data->t_resel_geran));
-  // TODO: t_resel_geran_sf
+
+  parser::section t_resel_geran_sf("t_resel_geran_sf");
+  sib7.add_subsection(&t_resel_geran_sf);
+  t_resel_geran_sf.set_optional(&data->t_resel_geran_sf_present);
+
+  t_resel_geran_sf.add_field(make_asn1_enum_number_str_parser("sf_medium", &data->t_resel_geran_sf.sf_medium));
+  t_resel_geran_sf.add_field(make_asn1_enum_number_str_parser("sf_high", &data->t_resel_geran_sf.sf_high));
 
   data->carrier_freqs_info_list_present = true;
   parser::section geran_neigh("carrier_freqs_info_list");
@@ -2007,6 +2607,204 @@ int parse_sib9(std::string filename, sib_type9_s* data)
   }
 }
 
+int parse_sib10(std::string filename, sib_type10_s* data)
+{
+  parser::section sib10("sib10");
+
+  sib10.add_field(make_asn1_bitstring_number_parser("message_id", &data->msg_id));
+  sib10.add_field(make_asn1_bitstring_number_parser("serial_num", &data->serial_num));
+  sib10.add_field(make_asn1_bitstring_number_parser("warning_type", &data->warning_type));
+
+  // Parse SIB message.
+  return parser::parse_section(std::move(filename), &sib10);
+}
+
+int parse_sib11(std::string filename, std::vector<sib_info_item_c>& data)
+{
+  srsran_assert(data.empty(), "The output data vector is not empty.");
+
+  parser::section sib11("sib11");
+
+  std::string warning_message;
+
+  // Create first SIB-11 segment.
+  data.emplace_back();
+  sib_type11_s& sib11_first_segment = data.back().set_sib11();
+
+  // Parse SIB-11 configuration parameters.
+  sib11.add_field(make_asn1_bitstring_number_parser("message_id", &sib11_first_segment.msg_id));
+  sib11.add_field(make_asn1_bitstring_number_parser("serial_num", &sib11_first_segment.serial_num));
+  sib11.add_field(make_asn1_bitstring_number_parser("data_coding_scheme", &sib11_first_segment.data_coding_scheme));
+  sib11.add_field(new parser::field<std::string>("warning_message", &warning_message));
+  if (parser::parse_section(std::move(filename), &sib11) != SRSRAN_SUCCESS) {
+    return SRSRAN_ERROR;
+  }
+
+  // Data and coding scheme must be present on the first SIB segment.
+  sib11_first_segment.data_coding_scheme_present = true;
+
+  // Derive the CBS encoding.
+  cbs_encodings encoding =
+      select_cbs_encoding(static_cast<uint8_t>(sib11_first_segment.data_coding_scheme.to_number()));
+
+  // Create a CB-Data IE with the contents of the warning message, as indicated in TS23.041 Section 9.4.2.2.5.
+  std::vector<uint8_t> cb_data;
+  switch (encoding) {
+    case cbs_encodings::GSM7:
+      if (cbs_encoder::fill_cb_data_gsm7(cb_data, warning_message) != SRSRAN_SUCCESS) {
+        return SRSRAN_ERROR;
+      }
+      break;
+    case cbs_encodings::UCS2:
+      if (cbs_encoder::fill_cb_data_ucs2(cb_data, warning_message) != SRSRAN_SUCCESS) {
+        return SRSRAN_ERROR;
+      }
+      break;
+    case cbs_encodings::INVALID:
+    default:
+      ERROR("SIB-11 Data Coding Scheme value leads to unsupported or invalid encoding option.\n");
+      return SRSRAN_ERROR;
+  }
+
+  // Set the maximum segment length well below the maximum SIB capacity. This ensures that the effective code rate stays
+  // low.
+  static constexpr unsigned msg_segment_max_nof_bytes = 100;
+  // Maximum number of segments (see TS36.331 Section 6.3.1. information element SystemInformationBlockType11).
+  static constexpr unsigned max_nof_segments = 64;
+
+  unsigned nof_segments = srsran::ceil_div(cb_data.size(), msg_segment_max_nof_bytes);
+  srsran_assert(nof_segments <= max_nof_segments,
+                "ETWS number of warning message segments (i.e., %d) exceeds the maximum of %d.",
+                nof_segments,
+                max_nof_segments);
+
+  unsigned cb_data_nof_bytes = static_cast<unsigned>(cb_data.size());
+  for (unsigned i_segment = 0, cb_data_offset = 0; i_segment != nof_segments; ++i_segment) {
+    // Copy the message ID and serial number from the first segment into all other segments.
+    if (i_segment > 0) {
+      data.emplace_back();
+      sib_type11_s& segment              = data.back().set_sib11();
+      segment.msg_id                     = sib11_first_segment.msg_id;
+      segment.serial_num                 = sib11_first_segment.serial_num;
+      segment.data_coding_scheme_present = false;
+    }
+
+    sib_type11_s& i_sib_segment = data.back().sib11();
+
+    if (i_segment == nof_segments - 1) {
+      i_sib_segment.warning_msg_segment_type = sib_type11_s::warning_msg_segment_type_e_::last_segment;
+    } else {
+      i_sib_segment.warning_msg_segment_type = sib_type11_s::warning_msg_segment_type_e_::not_last_segment;
+    }
+
+    i_sib_segment.warning_msg_segment_num = i_segment;
+
+    unsigned segment_nof_bytes = std::min(cb_data_nof_bytes - cb_data_offset, msg_segment_max_nof_bytes);
+
+    // The SIB11 warningMessageSegment field carries the CB-Data IE with the ETWS warning message, as per
+    // TS36.331 6.3.1.
+    i_sib_segment.warning_msg_segment.resize(segment_nof_bytes);
+    memcpy(i_sib_segment.warning_msg_segment.data(), &cb_data[cb_data_offset], segment_nof_bytes);
+
+    cb_data_offset += segment_nof_bytes;
+  }
+
+  return SRSRAN_SUCCESS;
+}
+
+int parse_sib12(std::string filename, std::vector<sib_info_item_c>& data)
+{
+  srsran_assert(data.empty(), "The output data vector is not empty.");
+
+  parser::section sib12("sib12");
+
+  std::string warning_message;
+
+  // Create first SIB-12 segment.
+  data.emplace_back();
+  sib_type12_r9_s& sib12_first_segment = data.back().set_sib12_v920();
+
+  // Parse SIB-12 configuration parameters.
+  sib12.add_field(make_asn1_bitstring_number_parser("message_id", &sib12_first_segment.msg_id_r9));
+  sib12.add_field(make_asn1_bitstring_number_parser("serial_num", &sib12_first_segment.serial_num_r9));
+  sib12.add_field(make_asn1_bitstring_number_parser("data_coding_scheme", &sib12_first_segment.data_coding_scheme_r9));
+  sib12.add_field(new parser::field<std::string>("warning_message", &warning_message));
+  if (parser::parse_section(std::move(filename), &sib12) != SRSRAN_SUCCESS) {
+    return SRSRAN_ERROR;
+  }
+
+  // Data and coding scheme must be present on the first SIB segment.
+  sib12_first_segment.data_coding_scheme_r9_present = true;
+
+  // Derive the CBS encoding.
+  cbs_encodings encoding =
+      select_cbs_encoding(static_cast<uint8_t>(sib12_first_segment.data_coding_scheme_r9.to_number()));
+
+  // Create a CB-Data IE with the contents of the warning message, as indicated in TS23.041 Section 9.4.2.2.5.
+  std::vector<uint8_t> cb_data;
+  switch (encoding) {
+    case cbs_encodings::GSM7:
+      if (cbs_encoder::fill_cb_data_gsm7(cb_data, warning_message) != SRSRAN_SUCCESS) {
+        return SRSRAN_ERROR;
+      }
+      break;
+    case cbs_encodings::UCS2:
+      if (cbs_encoder::fill_cb_data_ucs2(cb_data, warning_message) != SRSRAN_SUCCESS) {
+        return SRSRAN_ERROR;
+      }
+      break;
+    case cbs_encodings::INVALID:
+    default:
+      ERROR("SIB-12 Data Coding Scheme value leads to unsupported or invalid encoding option.\n");
+      return SRSRAN_ERROR;
+  }
+
+  // Set the maximum segment length well below the maximum SIB capacity. This ensures that the effective code rate stays
+  // low.
+  static constexpr unsigned msg_segment_max_nof_bytes = 100;
+  // Maximum number of segments (see TS36.331 Section 6.3.1. information element SystemInformationBlockType12).
+  static constexpr unsigned max_nof_segments = 64;
+
+  unsigned nof_segments = srsran::ceil_div(cb_data.size(), msg_segment_max_nof_bytes);
+  srsran_assert(nof_segments <= max_nof_segments,
+                "CMAS number of warning message segments (i.e., %d) exceeds the maximum of %d.",
+                nof_segments,
+                max_nof_segments);
+
+  unsigned cb_data_nof_bytes = static_cast<unsigned>(cb_data.size());
+  for (unsigned i_segment = 0, cb_data_offset = 0; i_segment != nof_segments; ++i_segment) {
+    // Copy the message ID and serial number from the first segment into all other segments.
+    if (i_segment > 0) {
+      data.emplace_back();
+      sib_type12_r9_s& segment              = data.back().set_sib12_v920();
+      segment.msg_id_r9                     = sib12_first_segment.msg_id_r9;
+      segment.serial_num_r9                 = sib12_first_segment.serial_num_r9;
+      segment.data_coding_scheme_r9_present = false;
+    }
+
+    sib_type12_r9_s& i_sib_segment = data.back().sib12_v920();
+
+    if (i_segment == nof_segments - 1) {
+      i_sib_segment.warning_msg_segment_type_r9 = sib_type12_r9_s::warning_msg_segment_type_r9_e_::last_segment;
+    } else {
+      i_sib_segment.warning_msg_segment_type_r9 = sib_type12_r9_s::warning_msg_segment_type_r9_e_::not_last_segment;
+    }
+
+    i_sib_segment.warning_msg_segment_num_r9 = i_segment;
+
+    unsigned segment_nof_bytes = std::min(cb_data_nof_bytes - cb_data_offset, msg_segment_max_nof_bytes);
+
+    // The SIB12 warningMessageSegment-r9 field carries the CB-Data IE with the CMAS warning message, as per
+    // TS36.331 6.3.1.
+    i_sib_segment.warning_msg_segment_r9.resize(segment_nof_bytes);
+    memcpy(i_sib_segment.warning_msg_segment_r9.data(), &cb_data[cb_data_offset], segment_nof_bytes);
+
+    cb_data_offset += segment_nof_bytes;
+  }
+
+  return SRSRAN_SUCCESS;
+}
+
 int parse_sib13(std::string filename, sib_type13_r9_s* data)
 {
   parser::section sib13("sib13");
@@ -2036,8 +2834,11 @@ int parse_sibs(all_args_t* args_, rrc_cfg_t* rrc_cfg_, srsenb::phy_cfg_t* phy_co
   sib_type2_s*     sib2  = &rrc_cfg_->sibs[1].set_sib2();
   sib_type3_s*     sib3  = &rrc_cfg_->sibs[2].set_sib3();
   sib_type4_s*     sib4  = &rrc_cfg_->sibs[3].set_sib4();
+  sib_type5_s*     sib5  = &rrc_cfg_->sibs[4].set_sib5();
+  sib_type6_s*     sib6  = &rrc_cfg_->sibs[5].set_sib6();
   sib_type7_s*     sib7  = &rrc_cfg_->sibs[6].set_sib7();
   sib_type9_s*     sib9  = &rrc_cfg_->sibs[8].set_sib9();
+  sib_type10_s*    sib10 = &rrc_cfg_->sibs[9].set_sib10();
   sib_type13_r9_s* sib13 = &rrc_cfg_->sibs[12].set_sib13_v920();
 
   sib_type1_s* sib1 = &rrc_cfg_->sib1;
@@ -2057,7 +2858,10 @@ int parse_sibs(all_args_t* args_, rrc_cfg_t* rrc_cfg_, srsenb::phy_cfg_t* phy_co
     return SRSRAN_ERROR;
   }
   sib_type1_s::cell_access_related_info_s_* cell_access = &sib1->cell_access_related_info;
-  cell_access->plmn_id_list.resize(1);
+  // In case additional PLMNs were given, resizing will remove them
+  if (cell_access->plmn_id_list.size() == 0) {
+    cell_access->plmn_id_list.resize(1);
+  }
   srsran::plmn_id_t plmn;
   if (plmn.from_string(mcc_str + mnc_str) == SRSRAN_ERROR) {
     ERROR("Could not convert %s to a plmn_id", (mcc_str + mnc_str).c_str());
@@ -2105,6 +2909,20 @@ int parse_sibs(all_args_t* args_, rrc_cfg_t* rrc_cfg_, srsenb::phy_cfg_t* phy_co
     }
   }
 
+  // Generate SIB5 if defined in mapping info
+  if (sib_is_present(sib1->sched_info_list, sib_type_e::sib_type5)) {
+    if (sib_sections::parse_sib5(args_->enb_files.sib_config, sib5) != SRSRAN_SUCCESS) {
+      return SRSRAN_ERROR;
+    }
+  }
+
+  // Generate SIB6 if defined in mapping info
+  if (sib_is_present(sib1->sched_info_list, sib_type_e::sib_type6)) {
+    if (sib_sections::parse_sib6(args_->enb_files.sib_config, sib6) != SRSRAN_SUCCESS) {
+      return SRSRAN_ERROR;
+    }
+  }
+
   // Generate SIB7 if defined in mapping info
   if (sib_is_present(sib1->sched_info_list, sib_type_e::sib_type7)) {
     if (sib_sections::parse_sib7(args_->enb_files.sib_config, sib7) != SRSRAN_SUCCESS) {
@@ -2117,6 +2935,36 @@ int parse_sibs(all_args_t* args_, rrc_cfg_t* rrc_cfg_, srsenb::phy_cfg_t* phy_co
     if (sib_sections::parse_sib9(args_->enb_files.sib_config, sib9) != SRSRAN_SUCCESS) {
       return SRSRAN_ERROR;
     }
+  }
+
+  // Generate SIB10 if defined in mapping info.
+  if (sib_is_present(sib1->sched_info_list, sib_type_e::sib_type10)) {
+    if (sib_sections::parse_sib10(args_->enb_files.sib_config, sib10) != SRSRAN_SUCCESS) {
+      return SRSRAN_ERROR;
+    }
+
+    // Activate ETWS paging indication.
+    rrc_cfg_->etws_present = true;
+  }
+
+  // Generate SIB11 if defined in mapping info.
+  if (sib_is_present(sib1->sched_info_list, sib_type_e::sib_type11)) {
+    if (sib_sections::parse_sib11(args_->enb_files.sib_config, rrc_cfg_->sib11_segments) != SRSRAN_SUCCESS) {
+      return SRSRAN_ERROR;
+    }
+
+    // Activate ETWS paging indication.
+    rrc_cfg_->etws_present = true;
+  }
+
+  // Generate SIB12 if defined in mapping info.
+  if (sib_is_present(sib1->sched_info_list, sib_type_e::sib_type12_v920)) {
+    if (sib_sections::parse_sib12(args_->enb_files.sib_config, rrc_cfg_->sib12_segments) != SRSRAN_SUCCESS) {
+      return SRSRAN_ERROR;
+    }
+
+    // Activate CMAS paging indication.
+    rrc_cfg_->cmas_present = true;
   }
 
   if (sib_is_present(sib1->sched_info_list, sib_type_e::sib_type13_v920)) {
@@ -2137,9 +2985,9 @@ int parse_sibs(all_args_t* args_, rrc_cfg_t* rrc_cfg_, srsenb::phy_cfg_t* phy_co
 
 } // namespace sib_sections
 
-namespace drb_sections {
+namespace rb_sections {
 
-int parse_drb(all_args_t* args_, rrc_cfg_t* rrc_cfg_)
+int parse_rb(all_args_t* args_, rrc_cfg_t* rrc_cfg_, rrc_nr_cfg_t* rrc_nr_cfg_)
 {
   parser::section srb1("srb1_config");
   bool            srb1_present = false;
@@ -2160,11 +3008,33 @@ int parse_drb(all_args_t* args_, rrc_cfg_t* rrc_cfg_)
   parser::section qci("qci_config");
   qci.add_field(new field_qci(rrc_cfg_->qci_cfg));
 
+  parser::section srb1_5g("srb1_5g_config");
+  bool            srb1_5g_present = false;
+  srb1_5g.set_optional(&srb1_5g_present);
+
+  parser::section srb1_5g_rlc_cfg("rlc_config");
+  srb1_5g.add_subsection(&srb1_5g_rlc_cfg);
+  srb1_5g_rlc_cfg.add_field(new field_5g_srb(rrc_nr_cfg_->srb1_cfg));
+
+  parser::section srb2_5g("srb2_5g_config");
+  bool            srb2_5g_present = false;
+  srb2_5g.set_optional(&srb2_5g_present);
+
+  parser::section srb2_5g_rlc_cfg("rlc_config");
+  srb2_5g.add_subsection(&srb2_5g_rlc_cfg);
+  srb2_5g_rlc_cfg.add_field(new field_5g_srb(rrc_nr_cfg_->srb2_cfg));
+
+  parser::section five_qi("five_qi_config");
+  five_qi.add_field(new field_five_qi(rrc_nr_cfg_->five_qi_cfg));
+
   // Run parser with two sections
   parser p(args_->enb_files.rb_config);
   p.add_section(&srb1);
   p.add_section(&srb2);
   p.add_section(&qci);
+  p.add_section(&srb1_5g);
+  p.add_section(&srb2_5g);
+  p.add_section(&five_qi);
 
   int ret = p.parse();
   if (not srb1_present) {
@@ -2174,9 +3044,17 @@ int parse_drb(all_args_t* args_, rrc_cfg_t* rrc_cfg_)
     rrc_cfg_->srb2_cfg.rlc_cfg.set_default_value();
   }
 
+  if (!srb1_5g_present || !srb2_5g_present) {
+    fprintf(stderr, "Optional 5G SRB configuration is not supported yet.\n");
+    fprintf(stderr, "Please specify 5G SRB1 and SRB2 configuration.\n");
+    return SRSRAN_ERROR;
+  }
+  rrc_nr_cfg_->srb1_cfg.present = srb1_5g_present;
+  rrc_nr_cfg_->srb2_cfg.present = srb1_5g_present;
+
   return ret;
 }
 
-} // namespace drb_sections
+} // namespace rb_sections
 
 } // namespace srsenb

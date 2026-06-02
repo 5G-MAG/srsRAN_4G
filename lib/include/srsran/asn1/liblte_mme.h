@@ -2430,6 +2430,7 @@ LIBLTE_ERROR_ENUM liblte_mme_pack_security_protected_nas_msg(LIBLTE_BYTE_MSG_STR
 #define LIBLTE_MME_EPS_NETWORK_FEATURE_SUPPORT_IEI 0x64
 #define LIBLTE_MME_ADDITIONAL_UPDATE_RESULT_IEI 0xF
 #define LIBLTE_MME_T3412_EXTENDED_VALUE_IEI 0x5E
+#define LIBLTE_MME_ADDITIONAL_INFORMATION_IEI 0x65
 // Enums
 // Structs
 typedef struct {
@@ -3649,6 +3650,8 @@ typedef struct {
 // Functions
 LIBLTE_ERROR_ENUM liblte_mme_pack_deactivate_eps_bearer_context_request_msg(
     LIBLTE_MME_DEACTIVATE_EPS_BEARER_CONTEXT_REQUEST_MSG_STRUCT* deact_eps_bearer_context_req,
+    uint8                                                        sec_hdr_type,
+    uint32                                                       count,
     LIBLTE_BYTE_MSG_STRUCT*                                      msg);
 LIBLTE_ERROR_ENUM liblte_mme_unpack_deactivate_eps_bearer_context_request_msg(
     LIBLTE_BYTE_MSG_STRUCT*                                      msg,

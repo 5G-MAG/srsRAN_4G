@@ -1,5 +1,5 @@
 /**
- * Copyright 2013-2021 Software Radio Systems Limited
+ * Copyright 2013-2023 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -24,7 +24,7 @@
 
 #ifdef LV_HAVE_SSE /* AVX, AVX2, FMA, AVX512  are in this group */
 #ifndef __OPTIMIZE__
-#define __OPTIMIZE__
+#define __OPTIMIZE__ 1
 #endif
 #include <immintrin.h>
 #endif /* LV_HAVE_SSE */

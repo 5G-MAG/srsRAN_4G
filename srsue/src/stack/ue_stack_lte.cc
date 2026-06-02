@@ -1,5 +1,5 @@
 /**
- * Copyright 2013-2021 Software Radio Systems Limited
+ * Copyright 2013-2023 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -42,6 +42,7 @@ ue_stack_lte::ue_stack_lte() :
   rrc_logger(srslog::fetch_basic_logger("RRC", false)),
   usim_logger(srslog::fetch_basic_logger("USIM", false)),
   nas_logger(srslog::fetch_basic_logger("NAS", false)),
+  nas5g_logger(srslog::fetch_basic_logger("NAS5G", false)),
   mac_nr_logger(srslog::fetch_basic_logger("MAC-NR")),
   rrc_nr_logger(srslog::fetch_basic_logger("RRC-NR", false)),
   rlc_nr_logger(srslog::fetch_basic_logger("RLC-NR", false)),
@@ -56,7 +57,10 @@ ue_stack_lte::ue_stack_lte() :
   rrc_nr(&task_sched),
   pdcp(&task_sched, "PDCP"),
   pdcp_nr(&task_sched, "PDCP-NR"),
+  sdap("SDAP-NR"),
+  sdap_pdcp(&pdcp_nr, &sdap),
   nas(srslog::fetch_basic_logger("NAS", false), &task_sched),
+  nas_5g(srslog::fetch_basic_logger("NAS5G", false), &task_sched),
   thread("STACK"),
   task_sched(512, 64),
   tti_tprof("tti_tprof", "STCK", TTI_STAT_PERIOD)
@@ -125,6 +129,8 @@ int ue_stack_lte::init(const stack_args_t& args_)
   nas_logger.set_level(srslog::str_to_basic_level(args.log.nas_level));
   nas_logger.set_hex_dump_max_size(args.log.nas_hex_limit);
 
+  nas5g_logger.set_level(srslog::str_to_basic_level(args.log.nas_level));
+  nas5g_logger.set_hex_dump_max_size(args.log.nas_hex_limit);
   mac_nr_logger.set_level(srslog::str_to_basic_level(args.log.mac_level));
   mac_nr_logger.set_hex_dump_max_size(args.log.mac_hex_limit);
   rrc_nr_logger.set_level(srslog::str_to_basic_level(args.log.rrc_level));
@@ -198,6 +204,7 @@ int ue_stack_lte::init(const stack_args_t& args_)
   if (args.pkt_trace.nas_pcap.enable) {
     if (nas_pcap.open(args.pkt_trace.nas_pcap.filename.c_str()) == SRSRAN_SUCCESS) {
       nas.start_pcap(&nas_pcap);
+      nas_5g.start_pcap(&nas_pcap);
       stack_logger.info("Open nas pcap file %s", args.pkt_trace.nas_pcap.filename.c_str());
     } else {
       stack_logger.error("Can not open pcap file %s", args.pkt_trace.nas_pcap.filename.c_str());
@@ -216,16 +223,36 @@ int ue_stack_lte::init(const stack_args_t& args_)
 
   mac.init(phy, &rlc, &rrc);
   rlc.init(&pdcp, &rrc, task_sched.get_timer_handler(), 0 /* RB_ID_SRB0 */);
-  pdcp.init(&rlc, &rrc, gw);
   nas.init(usim.get(), &rrc, gw, args.nas);
+
+  if (!args.sa_mode) {
+    pdcp.init(&rlc, &rrc, gw);
+  } else {
+    pdcp.init(&rlc, &rrc, &sdap_pdcp);
+    sdap.init(&sdap_pdcp, gw);
+  }
 
   mac_nr_args_t mac_nr_args = {};
   mac_nr.init(mac_nr_args, phy_nr, &rlc_nr, &rrc_nr);
   rlc_nr.init(&pdcp_nr, &rrc_nr, task_sched.get_timer_handler(), 0 /* RB_ID_SRB0 */);
   pdcp_nr.init(&rlc_nr, &rrc_nr, gw);
-  rrc_nr.init(
-      phy_nr, &mac_nr, &rlc_nr, &pdcp_nr, gw, &rrc, usim.get(), task_sched.get_timer_handler(), this, args.rrc_nr);
+  rrc_nr.init(phy_nr,
+              &mac_nr,
+              &rlc_nr,
+              &pdcp_nr,
+              &sdap,
+              gw,
+              &nas_5g,
+              args.sa_mode ? nullptr : &rrc,
+              usim.get(),
+              task_sched.get_timer_handler(),
+              this,
+              args.rrc_nr);
   rrc.init(phy, &mac, &rlc, &pdcp, &nas, usim.get(), gw, &rrc_nr, args.rrc);
+
+  if (args.sa_mode) {
+    nas_5g.init(usim.get(), &rrc_nr, gw, args.nas_5g);
+  }
 
   running = true;
   start(STACK_MAIN_THREAD_PRIO);
@@ -247,6 +274,7 @@ void ue_stack_lte::stop_impl()
 
   usim->stop();
   nas.stop();
+  nas_5g.stop();
   rrc.stop();
 
   rlc.stop();
@@ -270,8 +298,14 @@ void ue_stack_lte::stop_impl()
 bool ue_stack_lte::switch_on()
 {
   if (running) {
-    stack_logger.info("Triggering NAS switch on\n");
-    if (!ue_task_queue.try_push([this]() { nas.switch_on(); })) {
+    stack_logger.info("Triggering NAS switch on");
+    if (!ue_task_queue.try_push([this]() {
+          if (args.sa_mode) {
+            nas_5g.switch_on();
+          } else {
+            nas.switch_on();
+          }
+        })) {
       stack_logger.error("Triggering NAS switch on: ue_task_queue is full\n");
     }
   } else {
@@ -318,7 +352,13 @@ bool ue_stack_lte::disable_data()
 bool ue_stack_lte::start_service_request()
 {
   if (running) {
-    ue_task_queue.try_push([this]() { nas.start_service_request(srsran::establishment_cause_t::mo_data); });
+    ue_task_queue.try_push([this]() {
+      if (args.sa_mode) {
+        nas_5g.start_service_request();
+      } else {
+        nas.start_service_request(srsran::establishment_cause_t::mo_data);
+      }
+    });
   }
   return true;
 }
@@ -334,6 +374,7 @@ bool ue_stack_lte::get_metrics(stack_metrics_t* metrics)
     rlc.get_metrics(metrics.rlc, metrics.mac[0].nof_tti);
     nas.get_metrics(&metrics.nas);
     rrc.get_metrics(metrics.rrc);
+    rrc_nr.get_metrics(metrics.rrc_nr);
     pending_stack_metrics.push(metrics);
   });
   // wait for result
@@ -381,12 +422,17 @@ void ue_stack_lte::remove_eps_bearer(uint8_t eps_bearer_id)
 void ue_stack_lte::write_sdu(uint32_t eps_bearer_id, srsran::unique_byte_buffer_t sdu)
 {
   auto bearer = bearers.get_radio_bearer(eps_bearer_id);
-  auto task   = [this, eps_bearer_id, bearer](srsran::unique_byte_buffer_t& sdu) {
+
+  auto task = [this, eps_bearer_id, bearer](srsran::unique_byte_buffer_t& sdu) {
     // route SDU to PDCP entity
     if (bearer.rat == srsran_rat_t::lte) {
       pdcp.write_sdu(bearer.lcid, std::move(sdu));
     } else if (bearer.rat == srsran_rat_t::nr) {
-      pdcp_nr.write_sdu(bearer.lcid, std::move(sdu));
+      if (args.sa_mode) {
+        sdap.write_sdu(bearer.lcid, std::move(sdu));
+      } else {
+        pdcp_nr.write_sdu(bearer.lcid, std::move(sdu));
+      }
     } else {
       stack_logger.warning("Can't deliver SDU for EPS bearer %d. Dropping it.", eps_bearer_id);
     }
@@ -486,13 +532,14 @@ void ue_stack_lte::run_tti_impl(uint32_t tti, uint32_t tti_jump)
   rrc.run_tti();
   rrc_nr.run_tti(tti);
   nas.run_tti();
+  nas_5g.run_tti();
 
   if (args.have_tti_time_stats) {
     std::chrono::nanoseconds dur = tti_tprof.stop();
     if (dur > TTI_WARN_THRESHOLD_MS) {
-      mac_logger.warning("%s: detected long duration=%" PRId64 "ms",
-                         "proc_time",
-                         std::chrono::duration_cast<std::chrono::milliseconds>(dur).count());
+      mac_logger.info("%s: detected long duration=%" PRId64 "ms",
+                      "proc_time",
+                      std::chrono::duration_cast<std::chrono::milliseconds>(dur).count());
     }
   }
 
@@ -504,6 +551,15 @@ void ue_stack_lte::run_tti_impl(uint32_t tti, uint32_t tti_jump)
 void ue_stack_lte::set_phy_config_complete(bool status)
 {
   cfg_task_queue.push([this, status]() { rrc_nr.set_phy_config_complete(status); });
+}
+
+void ue_stack_lte::cell_search_found_cell(const cell_search_result_t& result)
+{
+  cfg_task_queue.push([this, result]() { rrc_nr.cell_search_found_cell(result); });
+}
+void ue_stack_lte::cell_select_completed(const rrc_interface_phy_nr::cell_select_result_t& result)
+{
+  cfg_task_queue.push([this, result]() { rrc_nr.cell_select_completed(result); });
 }
 
 } // namespace srsue

@@ -1,5 +1,5 @@
 /**
- * Copyright 2013-2021 Software Radio Systems Limited
+ * Copyright 2013-2023 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -189,6 +189,9 @@ static int ra_ul_grant_to_grant_prb_allocation(srsran_dci_ul_t*      dci,
     INFO("n_rb_pusch: %d, prb1: %d, prb2: %d, L: %d", n_rb_pusch, grant->n_prb[0], grant->n_prb[1], grant->L_prb);
     grant->freq_hopping = 1;
   }
+
+  /* Copy DM-RS Cyclic Shift. */
+  grant->n_dmrs = dci->n_dmrs;
 
   if (grant->n_prb[0] + grant->L_prb <= nof_prb && grant->n_prb[1] + grant->L_prb <= nof_prb) {
     return SRSRAN_SUCCESS;

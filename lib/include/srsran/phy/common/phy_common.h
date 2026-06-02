@@ -1,5 +1,5 @@
 /**
- * Copyright 2013-2021 Software Radio Systems Limited
+ * Copyright 2013-2023 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -198,7 +198,7 @@ typedef enum { SRSRAN_SCS_15KHZ = 0, SRSRAN_SCS_7KHZ5, SRSRAN_SCS_1KHZ25  } srsr
 #define SRSRAN_FDD_NOF_HARQ (FDD_HARQ_DELAY_DL_MS + FDD_HARQ_DELAY_UL_MS)
 #define SRSRAN_MAX_HARQ_PROC 15
 
-#define SRSRAN_NOF_LTE_BANDS 58
+#define SRSRAN_NOF_LTE_BANDS 59
 
 #define SRSRAN_DEFAULT_MAX_FRAMES_PBCH 500
 #define SRSRAN_DEFAULT_MAX_FRAMES_PSS 10
@@ -540,7 +540,7 @@ SRSRAN_API char* srsran_nbiot_mode_string(srsran_nbiot_mode_t mode);
  * Returns a constant string pointer with the ACK/NACK feedback mode
  *
  * @param ack_nack_feedback_mode Mode
- * @return Returns constant pointer with the text of the mode if succesful, `error` otherwise
+ * @return Returns constant pointer with the text of the mode if successful, `error` otherwise
  */
 SRSRAN_API const char* srsran_ack_nack_feedback_mode_string(srsran_ack_nack_feedback_mode_t ack_nack_feedback_mode);
 
@@ -548,7 +548,7 @@ SRSRAN_API const char* srsran_ack_nack_feedback_mode_string(srsran_ack_nack_feed
  * Returns a constant string pointer with the ACK/NACK feedback mode
  *
  * @param ack_nack_feedback_mode Mode
- * @return Returns constant pointer with the text of the mode if succesful, `error` otherwise
+ * @return Returns constant pointer with the text of the mode if successful, `error` otherwise
  */
 SRSRAN_API srsran_ack_nack_feedback_mode_t srsran_string_ack_nack_feedback_mode(const char* str);
 

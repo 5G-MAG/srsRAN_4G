@@ -1,5 +1,5 @@
 /**
- * Copyright 2013-2021 Software Radio Systems Limited
+ * Copyright 2013-2023 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -281,14 +281,15 @@ int test_s1ap_tenb_mobility(test_event test_params)
 
   /* TeNB receives S1AP Handover Request */
   asn1::s1ap::ho_request_s ho_req;
-  ho_req.protocol_ies.erab_to_be_setup_list_ho_req.value.resize(1);
-  auto& erab   = ho_req.protocol_ies.erab_to_be_setup_list_ho_req.value[0].value.erab_to_be_setup_item_ho_req();
-  erab.erab_id = 5;
+  ho_req->erab_to_be_setup_list_ho_req.value.resize(1);
+  auto& erab                     = ho_req->erab_to_be_setup_list_ho_req.value[0]->erab_to_be_setup_item_ho_req();
+  erab.erab_id                   = 5;
   erab.erab_level_qos_params.qci = 9;
+  erab.transport_layer_address   = asn1::bounded_bitstring<1, 160, true, true>(32);
   if (test_params == test_event::unknown_qci) {
     erab.erab_level_qos_params.qci = 10;
   }
-  ho_req.protocol_ies.ue_security_cap.value.integrity_protection_algorithms.set(14, true);
+  ho_req->ue_security_cap.value.integrity_protection_algorithms.set(14, true);
   asn1::s1ap::sourceenb_to_targetenb_transparent_container_s container;
   container.target_cell_id.cell_id.from_number(0x19C02);
   if (test_params == test_event::wrong_target_cell) {
@@ -297,9 +298,9 @@ int test_s1ap_tenb_mobility(test_event test_params)
   container.erab_info_list_present = true;
   container.erab_info_list.resize(1);
   container.erab_info_list[0].load_info_obj(ASN1_S1AP_ID_ERAB_INFO_LIST_ITEM);
-  container.erab_info_list[0].value.erab_info_list_item().erab_id               = 5;
-  container.erab_info_list[0].value.erab_info_list_item().dl_forwarding_present = true;
-  container.erab_info_list[0].value.erab_info_list_item().dl_forwarding.value =
+  container.erab_info_list[0]->erab_info_list_item().erab_id               = 5;
+  container.erab_info_list[0]->erab_info_list_item().dl_forwarding_present = true;
+  container.erab_info_list[0]->erab_info_list_item().dl_forwarding.value =
       asn1::s1ap::dl_forwarding_opts::dl_forwarding_proposed;
   uint8_t ho_prep_container[] = {
       0x0a, 0x10, 0x0b, 0x81, 0x80, 0x00, 0x01, 0x80, 0x00, 0xf3, 0x02, 0x08, 0x00, 0x00, 0x15, 0x80, 0x00, 0x14,
@@ -327,21 +328,32 @@ int test_s1ap_tenb_mobility(test_event test_params)
     TESTASSERT(tester.rrc.get_nof_users() == 0);
     return SRSRAN_SUCCESS;
   }
-  tester.tic();
-  TESTASSERT(tester.rrc.get_nof_users() == 1);
   TESTASSERT(tester.mac.ue_db.count(0x46));
   auto& mac_ue = tester.mac.ue_db[0x46];
   TESTASSERT(mac_ue.supported_cc_list[0].active);
   TESTASSERT(mac_ue.supported_cc_list[0].enb_cc_idx == 0);
   TESTASSERT(mac_ue.ue_bearers[srb_to_lcid(lte_srb::srb0)].direction == mac_lc_ch_cfg_t::BOTH);
+  TESTASSERT(mac_ue.ue_bearers[srb_to_lcid(lte_srb::srb1)].direction == mac_lc_ch_cfg_t::BOTH);
+  TESTASSERT(mac_ue.ue_bearers[srb_to_lcid(lte_srb::srb2)].direction == mac_lc_ch_cfg_t::IDLE);
+  TESTASSERT(mac_ue.ue_bearers[drb_to_lcid(lte_drb::drb1)].direction == mac_lc_ch_cfg_t::IDLE);
+
+  tester.tic();
+  TESTASSERT(tester.rrc.get_nof_users() == 1);
+  TESTASSERT(tester.mac.ue_db.count(0x46));
+  TESTASSERT(mac_ue.supported_cc_list[0].active);
+  TESTASSERT(mac_ue.supported_cc_list[0].enb_cc_idx == 0);
+  TESTASSERT(mac_ue.ue_bearers[srb_to_lcid(lte_srb::srb0)].direction == mac_lc_ch_cfg_t::BOTH);
+  TESTASSERT(mac_ue.ue_bearers[srb_to_lcid(lte_srb::srb1)].direction == mac_lc_ch_cfg_t::BOTH);
+  TESTASSERT(mac_ue.ue_bearers[srb_to_lcid(lte_srb::srb2)].direction == mac_lc_ch_cfg_t::IDLE);
+  TESTASSERT(mac_ue.ue_bearers[drb_to_lcid(lte_drb::drb1)].direction == mac_lc_ch_cfg_t::IDLE);
   // Check Security Configuration
   TESTASSERT(tester.pdcp.bearers.count(0x46));
   TESTASSERT(tester.pdcp.bearers[0x46].count(srb_to_lcid(lte_srb::srb1)) and
              tester.pdcp.bearers[0x46].count(srb_to_lcid(lte_srb::srb2)));
   TESTASSERT(tester.pdcp.bearers[0x46][srb_to_lcid(lte_srb::srb1)].enable_encryption);
   TESTASSERT(tester.pdcp.bearers[0x46][srb_to_lcid(lte_srb::srb1)].enable_integrity);
-  sec_cfg.set_security_capabilities(ho_req.protocol_ies.ue_security_cap.value);
-  sec_cfg.set_security_key(ho_req.protocol_ies.security_context.value.next_hop_param);
+  sec_cfg.set_security_capabilities(ho_req->ue_security_cap.value);
+  sec_cfg.set_security_key(ho_req->security_context.value.next_hop_param);
   sec_cfg.regenerate_keys_handover(tester.cfg.cell_list[0].pci, tester.cfg.cell_list[0].dl_earfcn);
   srsran::as_security_config_t as_sec_cfg = sec_cfg.get_as_sec_cfg();
   TESTASSERT(tester.pdcp.bearers[0x46][srb_to_lcid(lte_srb::srb1)].sec_cfg.k_rrc_int == as_sec_cfg.k_rrc_int);
@@ -350,11 +362,14 @@ int test_s1ap_tenb_mobility(test_event test_params)
   TESTASSERT(tester.pdcp.bearers[0x46][srb_to_lcid(lte_srb::srb1)].sec_cfg.cipher_algo == as_sec_cfg.cipher_algo);
   TESTASSERT(tester.pdcp.bearers[0x46][srb_to_lcid(lte_srb::srb1)].sec_cfg.integ_algo == as_sec_cfg.integ_algo);
 
+  TESTASSERT(mac_ue.ue_bearers[srb_to_lcid(lte_srb::srb1)].direction == mac_lc_ch_cfg_t::BOTH);
+  TESTASSERT(mac_ue.ue_bearers[srb_to_lcid(lte_srb::srb2)].direction == mac_lc_ch_cfg_t::IDLE);
+  TESTASSERT(mac_ue.ue_bearers[drb_to_lcid(lte_drb::drb1)].direction == mac_lc_ch_cfg_t::IDLE);
+
   // Check if S1AP Handover Request ACK send is called
   TESTASSERT(tester.s1ap.last_ho_req_ack.rnti == 0x46);
   TESTASSERT(tester.s1ap.last_ho_req_ack.ho_cmd_pdu != nullptr);
-  TESTASSERT(tester.s1ap.last_ho_req_ack.admitted_bearers.size() ==
-             ho_req.protocol_ies.erab_to_be_setup_list_ho_req.value.size());
+  TESTASSERT(tester.s1ap.last_ho_req_ack.admitted_bearers.size() == ho_req->erab_to_be_setup_list_ho_req.value.size());
   ho_cmd_s       ho_cmd;
   asn1::cbit_ref bref{tester.s1ap.last_ho_req_ack.ho_cmd_pdu->msg, tester.s1ap.last_ho_req_ack.ho_cmd_pdu->N_bytes};
   TESTASSERT(ho_cmd.unpack(bref) == asn1::SRSASN_SUCCESS);
@@ -366,14 +381,18 @@ int test_s1ap_tenb_mobility(test_event test_params)
   TESTASSERT(dl_dcch_msg.msg.c1().type().value == dl_dcch_msg_type_c::c1_c_::types_opts::rrc_conn_recfg);
   auto& recfg_r8 = dl_dcch_msg.msg.c1().rrc_conn_recfg().crit_exts.c1().rrc_conn_recfg_r8();
 
+  TESTASSERT(mac_ue.ue_bearers[srb_to_lcid(lte_srb::srb1)].direction == mac_lc_ch_cfg_t::BOTH);
+  TESTASSERT(mac_ue.ue_bearers[srb_to_lcid(lte_srb::srb2)].direction == mac_lc_ch_cfg_t::IDLE);
+  TESTASSERT(mac_ue.ue_bearers[drb_to_lcid(lte_drb::drb1)].direction == mac_lc_ch_cfg_t::IDLE);
+
   // Receives MMEStatusTransfer
   asn1::s1ap::bearers_subject_to_status_transfer_list_l bearers;
   bearers.resize(1);
-  bearers[0].value.bearers_subject_to_status_transfer_item().erab_id                = 5;
-  bearers[0].value.bearers_subject_to_status_transfer_item().dl_coun_tvalue.pdcp_sn = 100;
-  bearers[0].value.bearers_subject_to_status_transfer_item().dl_coun_tvalue.hfn     = 3;
-  bearers[0].value.bearers_subject_to_status_transfer_item().ul_coun_tvalue.pdcp_sn = 120;
-  bearers[0].value.bearers_subject_to_status_transfer_item().ul_coun_tvalue.hfn     = 4;
+  bearers[0]->bearers_subject_to_status_transfer_item().erab_id                = 5;
+  bearers[0]->bearers_subject_to_status_transfer_item().dl_coun_tvalue.pdcp_sn = 100;
+  bearers[0]->bearers_subject_to_status_transfer_item().dl_coun_tvalue.hfn     = 3;
+  bearers[0]->bearers_subject_to_status_transfer_item().ul_coun_tvalue.pdcp_sn = 120;
+  bearers[0]->bearers_subject_to_status_transfer_item().ul_coun_tvalue.hfn     = 4;
   tester.rrc.set_erab_status(0x46, bearers);
   TESTASSERT(tester.pdcp.bearers.count(0x46));
   TESTASSERT(tester.pdcp.bearers[0x46].count(3));
@@ -381,6 +400,10 @@ int test_s1ap_tenb_mobility(test_event test_params)
   TESTASSERT(tester.pdcp.bearers[0x46][3].state.tx_hfn == 3);
   TESTASSERT(tester.pdcp.bearers[0x46][3].state.next_pdcp_rx_sn == 120);
   TESTASSERT(tester.pdcp.bearers[0x46][3].state.rx_hfn == 4);
+
+  TESTASSERT(mac_ue.ue_bearers[srb_to_lcid(lte_srb::srb1)].direction == mac_lc_ch_cfg_t::BOTH);
+  TESTASSERT(mac_ue.ue_bearers[srb_to_lcid(lte_srb::srb2)].direction == mac_lc_ch_cfg_t::IDLE);
+  TESTASSERT(mac_ue.ue_bearers[drb_to_lcid(lte_drb::drb1)].direction == mac_lc_ch_cfg_t::IDLE);
 
   // user PRACHs and sends C-RNTI CE
   sched_interface::ue_cfg_t ue_cfg{};
@@ -497,7 +520,8 @@ int test_intraenb_mobility(srsran::log_sink_spy& spy, test_event test_params)
   TESTASSERT(tester.phy.last_cfg[0].enb_cc_idx == ue_cfg->supported_cc_list[0].enb_cc_idx);
   TESTASSERT(ue_cfg->ue_bearers[srb_to_lcid(lte_srb::srb0)].direction == srsenb::mac_lc_ch_cfg_t::BOTH);
   TESTASSERT(ue_cfg->ue_bearers[srb_to_lcid(lte_srb::srb1)].direction == srsenb::mac_lc_ch_cfg_t::BOTH);
-  TESTASSERT(ue_cfg->ue_bearers[srb_to_lcid(lte_srb::srb2)].direction == srsenb::mac_lc_ch_cfg_t::BOTH);
+  TESTASSERT(ue_cfg->ue_bearers[srb_to_lcid(lte_srb::srb2)].direction == srsenb::mac_lc_ch_cfg_t::IDLE);
+  TESTASSERT(ue_cfg->ue_bearers[drb_to_lcid(lte_drb::drb1)].direction == srsenb::mac_lc_ch_cfg_t::IDLE);
 
   /* Test Case: The UE receives a duplicate C-RNTI CE. Nothing should happen */
   if (test_params == test_event::duplicate_crnti_ce) {
@@ -511,7 +535,8 @@ int test_intraenb_mobility(srsran::log_sink_spy& spy, test_event test_params)
   /* Test Case: Terminate first Handover. No extra messages should be sent DL. SR/CQI resources match recfg message */
   uint8_t recfg_complete[] = {0x10, 0x00};
   copy_msg_to_buffer(pdu, recfg_complete);
-  tester.rrc.write_pdu(tester.rnti, srb_to_lcid(lte_srb::srb2), std::move(pdu));
+  tester.rrc.write_pdu(tester.rnti, srb_to_lcid(lte_srb::srb1), std::move(pdu));
+  tester.tic();
   TESTASSERT(tester.pdcp.last_sdu.sdu == nullptr);
   ue_cfg = &tester.mac.ue_db[tester.rnti];
   TESTASSERT(ue_cfg->pucch_cfg.sr_configured);
@@ -520,6 +545,10 @@ int test_intraenb_mobility(srsran::log_sink_spy& spy, test_event test_params)
   TESTASSERT(ue_cfg->supported_cc_list[0].dl_cfg.cqi_report.pmi_idx ==
              phy_cfg_ded.cqi_report_cfg.cqi_report_periodic.setup().cqi_pmi_cfg_idx);
   TESTASSERT(ue_cfg->pucch_cfg.n_pucch == phy_cfg_ded.cqi_report_cfg.cqi_report_periodic.setup().cqi_pucch_res_idx);
+  TESTASSERT(ue_cfg->ue_bearers[srb_to_lcid(lte_srb::srb0)].direction == srsenb::mac_lc_ch_cfg_t::BOTH);
+  TESTASSERT(ue_cfg->ue_bearers[srb_to_lcid(lte_srb::srb1)].direction == srsenb::mac_lc_ch_cfg_t::BOTH);
+  TESTASSERT(ue_cfg->ue_bearers[srb_to_lcid(lte_srb::srb2)].direction == srsenb::mac_lc_ch_cfg_t::BOTH);
+  TESTASSERT(ue_cfg->ue_bearers[drb_to_lcid(lte_drb::drb1)].direction == srsenb::mac_lc_ch_cfg_t::BOTH);
 
   /* Test Case: The RRC should be able to start a new handover */
   uint8_t meas_report[] = {0x08, 0x10, 0x38, 0x74, 0x00, 0x05, 0xBC, 0x80}; // PCI == 1

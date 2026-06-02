@@ -1,5 +1,5 @@
 /**
- * Copyright 2013-2021 Software Radio Systems Limited
+ * Copyright 2013-2023 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -67,7 +67,7 @@ struct sib_type13_r9_s;
 // MeasConfig
 struct cells_to_add_mod_s;
 struct cells_to_add_mod_nr_r15_s;
-struct black_cells_to_add_mod_s;
+struct excluded_cells_to_add_mod_s;
 struct report_cfg_eutra_s;
 struct meas_obj_to_add_mod_s;
 struct report_cfg_to_add_mod_s;
@@ -79,6 +79,12 @@ struct ue_eutra_cap_s;
 
 } // namespace rrc
 } // namespace asn1
+
+namespace srsenb {
+
+struct ue_cell_ded;
+
+} // namespace srsenb
 
 /************************
  *  Conversion Helpers
@@ -139,7 +145,8 @@ int get_carrier_freq(const asn1::rrc::meas_obj_to_add_mod_s& obj);
 /***************************
  *  EUTRA UE Capabilities
  **************************/
-rrc_ue_capabilities_t make_rrc_ue_capabilities(const asn1::rrc::ue_eutra_cap_s& eutra_cap_s);
+rrc_ue_capabilities_t make_rrc_ue_capabilities(const asn1::rrc::ue_eutra_cap_s& eutra_cap_s,
+                                               const srsenb::ue_cell_ded&       pcell);
 
 // mbms
 mbms_notif_cfg_t  make_mbms_notif_cfg(const asn1::rrc::mbms_notif_cfg_r9_s& asn1_type);
@@ -149,38 +156,5 @@ mcch_msg_t        make_mcch_msg(const asn1::rrc::mcch_msg_s& asn1_type);
 sib13_t           make_sib13(const asn1::rrc::sib_type13_r9_s& asn1_type);
 
 } // namespace srsran
-
-/************************
- * ASN1 RRC extensions
- ***********************/
-namespace asn1 {
-namespace rrc {
-
-/**************************
- *     RRC Obj Id
- *************************/
-
-uint8_t get_rrc_obj_id(const srb_to_add_mod_s& srb);
-uint8_t get_rrc_obj_id(const drb_to_add_mod_s& drb);
-uint8_t get_rrc_obj_id(const cells_to_add_mod_s& obj);
-uint8_t get_rrc_obj_id(const cells_to_add_mod_nr_r15_s& obj);
-uint8_t get_rrc_obj_id(const black_cells_to_add_mod_s& obj);
-uint8_t get_rrc_obj_id(const meas_obj_to_add_mod_s& obj);
-uint8_t get_rrc_obj_id(const report_cfg_to_add_mod_s& obj);
-uint8_t get_rrc_obj_id(const meas_id_to_add_mod_s& obj);
-uint8_t get_rrc_obj_id(const scell_to_add_mod_r10_s& obj);
-
-void set_rrc_obj_id(srb_to_add_mod_s& srb, uint8_t id);
-void set_rrc_obj_id(drb_to_add_mod_s& drb, uint8_t id);
-void set_rrc_obj_id(cells_to_add_mod_s& obj, uint8_t id);
-void set_rrc_obj_id(cells_to_add_mod_nr_r15_s& obj, uint8_t id);
-void set_rrc_obj_id(black_cells_to_add_mod_s& obj, uint8_t id);
-void set_rrc_obj_id(meas_obj_to_add_mod_s& obj, uint8_t id);
-void set_rrc_obj_id(report_cfg_to_add_mod_s& obj, uint8_t id);
-void set_rrc_obj_id(meas_id_to_add_mod_s& obj, uint8_t id);
-void set_rrc_obj_id(scell_to_add_mod_r10_s& obj, uint8_t id);
-
-} // namespace rrc
-} // namespace asn1
 
 #endif // SRSRAN_RRC_UTILS_H

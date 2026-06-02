@@ -1,5 +1,5 @@
 /**
- * Copyright 2013-2021 Software Radio Systems Limited
+ * Copyright 2013-2023 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -67,9 +67,11 @@ struct rrc_endc_cfg_t {
 struct rrc_cfg_t {
   uint32_t enb_id; ///< Required to pack SIB1
   // Per eNB SIBs
-  asn1::rrc::sib_type1_s     sib1;
-  asn1::rrc::sib_info_item_c sibs[ASN1_RRC_MAX_SIB];
-  asn1::rrc::mac_main_cfg_s  mac_cnfg;
+  asn1::rrc::sib_type1_s                  sib1;
+  asn1::rrc::sib_info_item_c              sibs[ASN1_RRC_MAX_SIB];
+  asn1::rrc::mac_main_cfg_s               mac_cnfg;
+  std::vector<asn1::rrc::sib_info_item_c> sib11_segments;
+  std::vector<asn1::rrc::sib_info_item_c> sib12_segments;
 
   asn1::rrc::pusch_cfg_ded_s                                                              pusch_cfg;
   asn1::rrc::ant_info_ded_s                                                               antenna_info;
@@ -85,13 +87,15 @@ struct rrc_cfg_t {
   bool                                                                                    meas_cfg_present = false;
   srsran_cell_t                                                                           cell;
   cell_list_t                                                                             cell_list;
-  uint32_t  num_nr_cells = 0; /// number of configured NR cells (used to configure RF)
-  uint32_t  max_mac_dl_kos;
-  uint32_t  max_mac_ul_kos;
-  uint32_t  rlf_release_timer_ms;
-  srb_cfg_t srb1_cfg;
-  srb_cfg_t srb2_cfg;
+  uint32_t       num_nr_cells = 0; /// number of configured NR cells (used to configure RF)
+  uint32_t       max_mac_dl_kos;
+  uint32_t       max_mac_ul_kos;
+  uint32_t       rlf_release_timer_ms;
+  srb_cfg_t      srb1_cfg;
+  srb_cfg_t      srb2_cfg;
   rrc_endc_cfg_t endc_cfg;
+  bool           etws_present = false;
+  bool           cmas_present = false;
 };
 
 constexpr uint32_t UE_PCELL_CC_IDX = 0;

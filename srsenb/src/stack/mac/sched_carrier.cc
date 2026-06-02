@@ -1,5 +1,5 @@
 /**
- * Copyright 2013-2021 Software Radio Systems Limited
+ * Copyright 2013-2023 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -25,7 +25,7 @@
 #include "srsenb/hdr/stack/mac/schedulers/sched_time_rr.h"
 #include "srsran/common/standard_streams.h"
 #include "srsran/common/string_helpers.h"
-#include "srsran/interfaces/enb_rrc_interfaces.h"
+#include "srsran/interfaces/enb_rrc_interface_mac.h"
 
 namespace srsenb {
 
@@ -37,7 +37,8 @@ using srsran::tti_point;
 
 bc_sched::bc_sched(const sched_cell_params_t& cfg_, srsenb::rrc_interface_mac* rrc_) :
   cc_cfg(&cfg_), rrc(rrc_), logger(srslog::fetch_basic_logger("MAC"))
-{}
+{
+}
 
 void bc_sched::dl_sched(sf_sched* tti_sched)
 {
@@ -63,7 +64,7 @@ void bc_sched::update_si_windows(sf_sched* tti_sched)
 
   for (uint32_t i = 0; i < pending_sibs.size(); ++i) {
     // There is SIB data
-    if (cc_cfg->cfg.sibs[i].len == 0) {
+    if (cc_cfg->cfg.sibs[i].empty()) {
       continue;
     }
 
@@ -74,7 +75,7 @@ void bc_sched::update_si_windows(sf_sched* tti_sched)
         x  = (i - 1) * cc_cfg->cfg.si_window_ms;
         sf = x % 10;
       }
-      if ((current_sfn % (cc_cfg->cfg.sibs[i].period_rf)) == x / 10 && current_sf_idx == sf) {
+      if ((current_sfn % (cc_cfg->cfg.sibs[i].get_period_rf())) == x / 10 && current_sf_idx == sf) {
         pending_sibs[i].is_in_window = true;
         pending_sibs[i].window_start = tti_tx_dl;
         pending_sibs[i].n_tx         = 0;
@@ -103,7 +104,7 @@ void bc_sched::alloc_sibs(sf_sched* tti_sched)
   for (uint32_t sib_idx = 0; sib_idx < pending_sibs.size(); sib_idx++) {
     sched_sib_t& pending_sib = pending_sibs[sib_idx];
     // Check if SIB is configured and within window
-    if (cc_cfg->cfg.sibs[sib_idx].len == 0 or not pending_sib.is_in_window or pending_sib.n_tx >= 4) {
+    if (cc_cfg->cfg.sibs[sib_idx].empty() or not pending_sib.is_in_window or pending_sib.n_tx >= 4) {
       continue;
     }
 
@@ -133,9 +134,9 @@ void bc_sched::alloc_sibs(sf_sched* tti_sched)
       }
     }
     if (ret != alloc_result::success) {
-      logger.warning("SCHED: Could not allocate SI message, idx=%d, len=%d. Cause: %s",
+      logger.error("SCHED: Could not allocate SI message, idx=%d, len=%d. Cause: %s",
                      sib_idx,
-                     cc_cfg->cfg.sibs[sib_idx].len,
+                     cc_cfg->cfg.sibs[sib_idx].get_length(),
                      to_string(ret));
     }
   }
@@ -178,8 +179,9 @@ void bc_sched::reset()
  *******************************************************/
 
 ra_sched::ra_sched(const sched_cell_params_t& cfg_, sched_ue_list& ue_db_) :
-  cc_cfg(&cfg_), logger(srslog::fetch_basic_logger("MAC")), ue_db(&ue_db_)
-{}
+  cc_cfg(&cfg_), logger(srslog::fetch_basic_logger("MAC")), ue_db(&ue_db_), pending_rars(16)
+{
+}
 
 alloc_result ra_sched::allocate_pending_rar(sf_sched* tti_sched, const pending_rar_t& rar, uint32_t& nof_grants_alloc)
 {
@@ -214,8 +216,10 @@ void ra_sched::dl_sched(sf_sched* tti_sched)
   tti_point tti_tx_dl = tti_sched->get_tti_tx_dl();
   rar_aggr_level      = 2;
 
-  for (auto it = pending_rars.begin(); it != pending_rars.end();) {
-    auto& rar = *it;
+  for (auto& rar : pending_rars) {
+    if (rar.msg3_grant.empty()) {
+      continue;
+    }
 
     // In case of RAR outside RAR window:
     // - if window has passed, discard RAR
@@ -232,7 +236,7 @@ void ra_sched::dl_sched(sf_sched* tti_sched)
                        tti_tx_dl);
         srsran::console("%s\n", srsran::to_c_str(str_buffer));
         logger.warning("%s", srsran::to_c_str(str_buffer));
-        it = pending_rars.erase(it);
+        rar.msg3_grant.clear(); // mark as handled.
         continue;
       }
       return;
@@ -248,7 +252,7 @@ void ra_sched::dl_sched(sf_sched* tti_sched)
       // - otherwise, erase only Msg3 grants that were allocated, and stop iteration
 
       if (nof_rar_allocs == rar.msg3_grant.size()) {
-        it = pending_rars.erase(it);
+        rar.msg3_grant.clear(); // mark as handled.
       } else {
         std::copy(rar.msg3_grant.begin() + nof_rar_allocs, rar.msg3_grant.end(), rar.msg3_grant.begin());
         rar.msg3_grant.resize(rar.msg3_grant.size() - nof_rar_allocs);
@@ -261,8 +265,12 @@ void ra_sched::dl_sched(sf_sched* tti_sched)
       if (ret != alloc_result::no_cch_space) {
         break;
       }
-      ++it;
     }
+  }
+
+  // Pop elements at the front that have been handled.
+  while (not pending_rars.empty() and pending_rars.begin()->msg3_grant.empty()) {
+    pending_rars.pop();
   }
 }
 
@@ -296,7 +304,11 @@ int ra_sched::dl_rach_info(dl_sched_rar_info_t rar_info)
   p.ra_rnti   = ra_rnti;
   p.prach_tti = tti_point{rar_info.prach_tti};
   p.msg3_grant.push_back(rar_info);
-  pending_rars.push_back(p);
+  if (not pending_rars.try_push(p)) {
+    logger.warning("SCHED: Unable to handle RAR ra-rnti=0x%x, as the maximum number of pending RARs has been reached",
+                   ra_rnti);
+    return SRSRAN_ERROR;
+  }
 
   return SRSRAN_SUCCESS;
 }
@@ -349,6 +361,7 @@ void sched::carrier_sched::reset()
 {
   ra_sched_ptr.reset();
   bc_sched_ptr.reset();
+  pending_pdcch_orders.clear();
 }
 
 void sched::carrier_sched::carrier_cfg(const sched_cell_params_t& cell_params_)
@@ -411,6 +424,9 @@ const cc_sched_result& sched::carrier_sched::generate_tti_result(tti_point tti_r
     /* Schedule Msg3 */
     sf_sched* sf_msg3_sched = get_sf_sched(tti_rx + MSG3_DELAY_MS);
     ra_sched_ptr->ul_sched(tti_sched, sf_msg3_sched);
+
+    /* Schedule PDCCH orders */
+    pdcch_order_sched(tti_sched);
   }
 
   /* Prioritize PDCCH scheduling for DL and UL data in a RoundRobin fashion */
@@ -488,6 +504,40 @@ const sf_sched_result* sched::carrier_sched::get_sf_result(tti_point tti_rx) con
 int sched::carrier_sched::dl_rach_info(dl_sched_rar_info_t rar_info)
 {
   return ra_sched_ptr->dl_rach_info(rar_info);
+}
+
+int sched::carrier_sched::pdcch_order_info(dl_sched_po_info_t pdcch_order_info)
+{
+  logger.info("SCHED: New PDCCH order preamble=%d, prach_mask_idx=%d crnti=0x%x",
+              pdcch_order_info.preamble_idx,
+              pdcch_order_info.prach_mask_idx,
+              pdcch_order_info.crnti);
+
+  // create new PDCCH order
+  pending_pdcch_orders.push_back(pdcch_order_info);
+
+  return SRSRAN_SUCCESS;
+}
+
+void sched::carrier_sched::pdcch_order_sched(sf_sched* tti_sched)
+{
+  for (auto it = pending_pdcch_orders.begin(); it != pending_pdcch_orders.end();) {
+    auto& pending_pdcch_order = *it;
+
+    alloc_result ret = alloc_result::no_sch_space;
+
+    rbg_interval rbg_interv = find_empty_rbg_interval(1, tti_sched->get_dl_mask());
+    if (rbg_interv.length() == 1) {
+      ret = tti_sched->alloc_pdcch_order(pending_pdcch_order, po_aggr_level, rbg_interv);
+    }
+
+    if (ret == alloc_result::success) {
+      it = pending_pdcch_orders.erase(it);
+    } else {
+      logger.warning("SCHED: Could not allocate PDCCH order, cause=%s", to_string(ret));
+      ++it;
+    }
+  }
 }
 
 } // namespace srsenb

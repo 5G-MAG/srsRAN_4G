@@ -1,5 +1,5 @@
 /**
- * Copyright 2013-2021 Software Radio Systems Limited
+ * Copyright 2013-2023 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -44,6 +44,7 @@
 
 #include "srsenb/hdr/enb.h"
 #include "srsenb/hdr/metrics_csv.h"
+#include "srsenb/hdr/metrics_e2.h"
 #include "srsenb/hdr/metrics_json.h"
 #include "srsenb/hdr/metrics_stdout.h"
 #include "srsran/common/enb_events.h"
@@ -65,6 +66,7 @@ void parse_args(all_args_t* args, int argc, char* argv[])
   string mcc;
   string mnc;
   string enb_id;
+  string cfr_mode;
   bool   use_standard_lte_rates = false;
 
   // Command line only options
@@ -142,10 +144,12 @@ void parse_args(all_args_t* args, int argc, char* argv[])
 
     /* PCAP */
     ("pcap.enable",    bpo::value<bool>(&args->stack.mac_pcap.enable)->default_value(false),         "Enable MAC packet captures for wireshark")
-    ("pcap.filename",  bpo::value<string>(&args->stack.mac_pcap.filename)->default_value("enb_mac.pcap"), "MAC layer capture filename")
-    ("pcap.nr_filename",  bpo::value<string>(&args->nr_stack.mac.pcap.filename)->default_value("enb_mac_nr.pcap"), "NR MAC layer capture filename")
+    ("pcap.filename",  bpo::value<string>(&args->stack.mac_pcap.filename)->default_value("/tmp/enb_mac.pcap"), "MAC layer capture filename")
+    ("pcap.nr_filename",  bpo::value<string>(&args->nr_stack.mac.pcap.filename)->default_value("/tmp/enb_mac_nr.pcap"), "NR MAC layer capture filename")
     ("pcap.s1ap_enable",   bpo::value<bool>(&args->stack.s1ap_pcap.enable)->default_value(false),         "Enable S1AP packet captures for wireshark")
-    ("pcap.s1ap_filename", bpo::value<string>(&args->stack.s1ap_pcap.filename)->default_value("enb_s1ap.pcap"), "S1AP layer capture filename")
+    ("pcap.s1ap_filename", bpo::value<string>(&args->stack.s1ap_pcap.filename)->default_value("/tmp/enb_s1ap.pcap"), "S1AP layer capture filename")
+    ("pcap.ngap_enable",   bpo::value<bool>(&args->nr_stack.ngap_pcap.enable)->default_value(false),         "Enable NGAP packet captures for wireshark")
+    ("pcap.ngap_filename", bpo::value<string>(&args->nr_stack.ngap_pcap.filename)->default_value("/tmp/enb_ngap.pcap"), "NGAP layer capture filename")
     ("pcap.mac_net_enable", bpo::value<bool>(&args->stack.mac_pcap_net.enable)->default_value(false),         "Enable MAC network captures")
     ("pcap.bind_ip", bpo::value<string>(&args->stack.mac_pcap_net.bind_ip)->default_value("0.0.0.0"),         "Bind IP address for MAC network trace")
     ("pcap.bind_port", bpo::value<uint16_t>(&args->stack.mac_pcap_net.bind_port)->default_value(5687),        "Bind port for MAC network trace")
@@ -178,7 +182,13 @@ void parse_args(all_args_t* args, int argc, char* argv[])
     ("scheduler.max_sib_coderate", bpo::value<float>(&args->stack.mac.sched.max_sib_coderate)->default_value(0.8), "Upper bound on SIB and RAR grants coderate")
     ("scheduler.pdcch_cqi_offset", bpo::value<int>(&args->stack.mac.sched.pdcch_cqi_offset)->default_value(0), "CQI offset in derivation of PDCCH aggregation level")
 
-
+    /*Slicing conifguration*/
+    ("slicing.enable_eMBB", bpo::value<bool>(&args->nr_stack.ngap.nssai[0].active)->default_value(true), "Enables enhanced mobile broadband (eMBB) slice in the gNodeB")
+    ("slicing.enable_URLLC", bpo::value<bool>(&args->nr_stack.ngap.nssai[1].active)->default_value(false), "Enables Ultra Reliable Low Latency Communications (URLLC) slice in the gNodeB")
+    ("slicing.enable_MIoT", bpo::value<bool>(&args->nr_stack.ngap.nssai[2].active)->default_value(false), "Enables Massive Internet of Things (MIoT) slice in the gNodeB")
+    ("slicing.eMBB_sd", bpo::value<uint64_t>(&args->nr_stack.ngap.nssai[0].sd)->default_value(0), " eMBB slice differentiator")
+    ("slicing.URLLC_sd", bpo::value<uint64_t>(&args->nr_stack.ngap.nssai[1].sd)->default_value(0), " URLLC slice differentiator")
+    ("slicing.MIoT_sd", bpo::value<uint64_t>(&args->nr_stack.ngap.nssai[2].sd)->default_value(0), "  slice differentiator")
 
     /* Downlink Channel emulator section */
     ("channel.dl.enable",            bpo::value<bool>(&args->phy.dl_channel_args.enable)->default_value(false),               "Enable/Disable internal Downlink channel emulator")
@@ -219,7 +229,24 @@ void parse_args(all_args_t* args, int argc, char* argv[])
     ("channel.ul.hst.fd_hz",         bpo::value<float>(&args->phy.ul_channel_args.hst_fd_hz)->default_value(+750.0f),            "Doppler frequency in Hz")
     ("channel.ul.hst.init_time_s",   bpo::value<float>(&args->phy.ul_channel_args.hst_init_time_s)->default_value(0),            "Initial time in seconds")
 
-      /* Expert section */
+    /* CFR section */
+    ("cfr.enable", bpo::value<bool>(&args->phy.cfr_args.enable)->default_value(args->phy.cfr_args.enable), "CFR enable")
+    ("cfr.mode", bpo::value<string>(&cfr_mode)->default_value("manual"), "CFR mode")
+    ("cfr.manual_thres", bpo::value<float>(&args->phy.cfr_args.manual_thres)->default_value(args->phy.cfr_args.manual_thres), "Fixed manual clipping threshold for CFR manual mode")
+    ("cfr.strength", bpo::value<float>(&args->phy.cfr_args.strength)->default_value(args->phy.cfr_args.strength), "CFR ratio between amplitude-limited vs original signal (0 to 1)")
+    ("cfr.auto_target_papr", bpo::value<float>(&args->phy.cfr_args.auto_target_papr)->default_value(args->phy.cfr_args.auto_target_papr), "Signal PAPR target (in dB) in CFR auto modes")
+    ("cfr.ema_alpha", bpo::value<float>(&args->phy.cfr_args.ema_alpha)->default_value(args->phy.cfr_args.ema_alpha), "Alpha coefficient for the power average in auto_ema mode (0 to 1)")
+
+    /* RIC section */
+    ("e2_agent.enable",   bpo::value<bool>(&args->e2_agent.enable)->default_value(false), "Enables the E2 agent")
+    ("e2_agent.ric_ip",   bpo::value<string>(&args->e2_agent.ric_ip)->default_value("127.0.0.1"), "RIC IP address")
+    ("e2_agent.ric_port", bpo::value<uint32_t>(&args->e2_agent.ric_port)->default_value(36421), "RIC port")
+    ("e2_agent.ric_bind_ip",   bpo::value<string>(&args->e2_agent.ric_bind_ip)->default_value("127.0.0.1"), "Local IP address to bind for RIC connection")
+    ("e2_agent.ric_bind_port", bpo::value<uint32_t>(&args->e2_agent.ric_bind_port)->default_value(36425), "Local port to bind for RIC connection")
+    ("e2_agent.max_ric_setup_retries", bpo::value<int32_t>(&args->e2_agent.max_ric_setup_retries)->default_value(-1), "Max RIC setup retries")
+    ("e2_agent.ric_connect_timer",  bpo::value<uint32_t>(&args->e2_agent.ric_connect_timer)->default_value(10), "Connection Retry Timer for RIC connection (seconds)")
+
+    /* Expert section */
     ("expert.metrics_period_secs", bpo::value<float>(&args->general.metrics_period_secs)->default_value(1.0), "Periodicity for metrics in seconds.")
     ("expert.metrics_csv_enable",  bpo::value<bool>(&args->general.metrics_csv_enable)->default_value(false), "Write metrics to CSV file.")
     ("expert.metrics_csv_filename", bpo::value<string>(&args->general.metrics_csv_filename)->default_value("/tmp/enb_metrics.csv"), "Metrics CSV filename.")
@@ -257,6 +284,16 @@ void parse_args(all_args_t* args, int argc, char* argv[])
     ("expert.ts1_reloc_overall_timeout", bpo::value<uint32_t>(&args->stack.s1ap.ts1_reloc_overall_timeout)->default_value(10000), "S1AP TS 36.413 TS1RelocOverall Expiry Timeout value in milliseconds.")
     ("expert.rlf_min_ul_snr_estim", bpo::value<int>(&args->stack.mac.rlf_min_ul_snr_estim)->default_value(-2), "SNR threshold in dB below which the eNB is notified with rlf ko.")
 
+    ("expert.max_s1_setup_retries", bpo::value<int32_t>(&args->stack.s1ap.max_s1_setup_retries)->default_value(-1), "Max S1 setup retries")
+    ("expert.s1_connect_timer",  bpo::value<uint32_t>(&args->stack.s1ap.s1_connect_timer)->default_value(10), "Connection Retry Timer for S1 connection (seconds)")
+    ("expert.sctp_reuse_addr",     bpo::value<bool>(&args->stack.s1ap.sctp_reuse_addr)->default_value(false), "Use SO_REUSE_ADDR on S1-C interface.")
+    ("expert.sctp_rto_max", bpo::value<int32_t>(&args->stack.s1ap.sctp_rto_max)->default_value(6000), "SCTP maximum RTO.")
+    ("expert.sctp_init_max_attempts", bpo::value<int32_t>(&args->stack.s1ap.sctp_init_max_attempts)->default_value(3), "Maximum SCTP init attempts.")
+    ("expert.sctp_max_init_timeo)", bpo::value<int32_t>(&args->stack.s1ap.sctp_max_init_timeo)->default_value(5000), "Maximum SCTP init timeout.")
+    ("expert.rx_gain_offset", bpo::value<float>(&args->phy.rx_gain_offset)->default_value(62), "RX Gain offset to add to rx_gain to calibrate RSRP readings")
+    ("expert.mac_prach_bi", bpo::value<uint32_t>(&args->stack.mac.prach_bi)->default_value(0), "Backoff Indicator to reduce contention in the PRACH channel")
+    ("expert.use_cedron_f_est_alg", bpo::value<bool>(&args->phy.use_cedron_alg)->default_value(false), "Whether to use Cedron freq estimation algorithm or not")
+
     // eMBMS section
     ("embms.enable", bpo::value<bool>(&args->stack.embms.enable)->default_value(false), "Enables MBMS in the eNB")
     ("embms.m1u_multiaddr", bpo::value<string>(&args->stack.embms.m1u_multiaddr)->default_value("239.255.0.1"), "M1-U Multicast address the eNB joins.")
@@ -267,13 +304,6 @@ void parse_args(all_args_t* args, int argc, char* argv[])
     ("scheduler.nr_pdsch_mcs", bpo::value<int>(&args->nr_stack.mac.sched_cfg.fixed_dl_mcs)->default_value(28), "Fixed NR DL MCS (-1 for dynamic).")
     ("scheduler.nr_pusch_mcs", bpo::value<int>(&args->nr_stack.mac.sched_cfg.fixed_ul_mcs)->default_value(28), "Fixed NR UL MCS (-1 for dynamic).")
     ("expert.nr_pusch_max_its", bpo::value<uint32_t>(&args->phy.nr_pusch_max_its)->default_value(10),     "Maximum number of LDPC iterations for NR.")
-
-    // VNF params
-    ("vnf.type", bpo::value<string>(&args->phy.vnf_args.type)->default_value("gnb"), "VNF instance type [gnb,ue].")
-    ("vnf.addr", bpo::value<string>(&args->phy.vnf_args.bind_addr)->default_value("localhost"), "Address to bind VNF interface.")
-    ("vnf.port", bpo::value<uint16_t>(&args->phy.vnf_args.bind_port)->default_value(3333), "Bind port.")
-    ("log.vnf_level",     bpo::value<string>(&args->phy.vnf_args.log_level),   "VNF log level.")
-    ("log.vnf_hex_limit", bpo::value<int>(&args->phy.vnf_args.log_hex_limit),  "VNF log hex dump limit.")
   ;
 
   // Positional options - config file location
@@ -344,6 +374,12 @@ void parse_args(all_args_t* args, int argc, char* argv[])
   if (!srsran::string_to_mnc(mnc, &args->stack.s1ap.mnc)) {
     cout << "Error parsing enb.mnc:" << mnc << " - must be a 2 or 3-digit string." << endl;
   }
+  if (!srsran::string_to_mcc(mcc, &args->nr_stack.ngap.mcc)) {
+    cout << "Error parsing enb.mcc:" << mcc << " - must be a 3-digit string." << endl;
+  }
+  if (!srsran::string_to_mnc(mnc, &args->nr_stack.ngap.mnc)) {
+    cout << "Error parsing enb.mnc:" << mnc << " - must be a 2 or 3-digit string." << endl;
+  }
 
   if (args->stack.embms.enable) {
     if (args->stack.mac.sched.max_nof_ctrl_symbols == 3) {
@@ -366,13 +402,20 @@ void parse_args(all_args_t* args, int argc, char* argv[])
   // Convert eNB Id
   std::size_t pos = {};
   try {
-    args->enb.enb_id = std::stoi(enb_id, &pos, 0);
+    args->enb.enb_id = std::stoul(enb_id, &pos, 0);
   } catch (...) {
     cout << "Error parsing enb.enb_id: " << enb_id << "." << endl;
     exit(1);
   }
   if (pos != enb_id.size()) {
     cout << "Error parsing enb.enb_id: " << enb_id << "." << endl;
+    exit(1);
+  }
+
+  // parse the CFR mode string
+  args->phy.cfr_args.mode = srsran_cfr_str2mode(cfr_mode.c_str());
+  if (args->phy.cfr_args.mode == SRSRAN_CFR_THR_INVALID) {
+    cout << "Error, invalid CFR mode: " << cfr_mode << endl;
     exit(1);
   }
 
@@ -450,7 +493,7 @@ void parse_args(all_args_t* args, int argc, char* argv[])
   }
 
   if (!config_exists(args->enb_files.rb_config, "rb.conf")) {
-    cout << "Failed to read DRB configuration file " << args->enb_files.rb_config << " - exiting" << endl;
+    cout << "Failed to read RB configuration file " << args->enb_files.rb_config << " - exiting" << endl;
     exit(1);
   }
 
@@ -472,6 +515,9 @@ static void execute_cmd(metrics_stdout* metrics, srsenb::enb_command_interface* 
       cout << "Enter t to restart trace." << endl;
     }
     metrics->toggle_print(do_metrics);
+  } else if (cmd[0] == "m") {
+    // Trigger cell measurements
+    control->cmd_cell_measure();
   } else if (cmd[0] == "sleep") {
     if (cmd.size() != 2) {
       cout << "Usage: " << cmd[0] << " [number of seconds]" << endl;
@@ -514,6 +560,7 @@ static void execute_cmd(metrics_stdout* metrics, srsenb::enb_command_interface* 
   } else {
     cout << "Available commands: " << endl;
     cout << "          t: starts console trace" << endl;
+    cout << "          m: downlink signal measurements" << endl;
     cout << "          q: quit srsenb" << endl;
     cout << "  cell_gain: set relative cell gain" << endl;
     cout << "      sleep: pauses the commmand line operation for a given time in seconds" << endl;
@@ -641,15 +688,18 @@ int main(int argc, char* argv[])
   metricshub.add_listener(&metrics_screen);
   metrics_screen.set_handle(enb.get());
 
-  srsenb::metrics_csv metrics_file(args.general.metrics_csv_filename);
+  srsenb::metrics_csv metrics_file(args.general.metrics_csv_filename, enb.get());
   if (args.general.metrics_csv_enable) {
     metricshub.add_listener(&metrics_file);
-    metrics_file.set_handle(enb.get());
   }
 
   srsenb::metrics_json json_metrics(json_channel, enb.get());
   if (args.general.report_json_enable) {
     metricshub.add_listener(&json_metrics);
+  }
+  srsenb::metrics_e2 e2_metrics(enb.get());
+  if (args.e2_agent.enable) {
+    metricshub.add_listener(&e2_metrics);
   }
 
   // create input thread
@@ -658,6 +708,11 @@ int main(int argc, char* argv[])
   if (running) {
     if (args.gui.enable) {
       enb->start_plot();
+    }
+    if (args.e2_agent.enable) {
+      if (enb->enable_e2_agent(&e2_metrics)) {
+        srslog::fetch_basic_logger("E2_AGENT").error("Failed to enable E2 Agent");
+      }
     }
   }
   int cnt    = 0;

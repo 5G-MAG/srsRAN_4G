@@ -1,5 +1,5 @@
 /**
- * Copyright 2013-2021 Software Radio Systems Limited
+ * Copyright 2013-2023 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -198,8 +198,13 @@ void ul_harq_entity_nr::ul_harq_process_nr::new_grant_ul(const mac_interface_phy
   ) {
     // new transmission
 
-    // generate new PDU (Msg3 or normal UL)
-    harq_buffer = harq_entity->mux->get_pdu(grant.tbs);
+    if (grant.is_rar_grant) {
+      // generate new PDU (Msg3)
+      harq_buffer = harq_entity->mux->get_msg3(grant.tbs);
+    } else {
+      // generate new PDU (normal UL)
+      harq_buffer = harq_entity->mux->get_pdu(grant.tbs);
+    }
 
     // 3> if a MAC PDU to transmit has been obtained
     if (harq_buffer != nullptr) {
@@ -215,7 +220,7 @@ void ul_harq_entity_nr::ul_harq_process_nr::new_grant_ul(const mac_interface_phy
     // retransmission
     if (harq_buffer == nullptr) {
       // ignore the UL grant
-      logger.info("UL %d:  HARQ buffer empty. Ignoring grant.");
+      logger.info("UL %d:  HARQ buffer empty. Ignoring grant.", pid);
       return;
     }
 

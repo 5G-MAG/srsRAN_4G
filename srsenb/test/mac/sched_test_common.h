@@ -1,5 +1,5 @@
 /**
- * Copyright 2013-2021 Software Radio Systems Limited
+ * Copyright 2013-2023 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -25,7 +25,7 @@
 #include "sched_sim_ue.h"
 #include "sched_test_utils.h"
 #include "srsenb/hdr/stack/mac/sched.h"
-#include "srsran/interfaces/enb_rrc_interfaces.h"
+#include "srsran/interfaces/enb_rrc_interface_mac.h"
 #include "srsran/srslog/srslog.h"
 #include <random>
 
@@ -48,7 +48,11 @@ public:
   void     set_radiolink_dl_state(uint16_t rnti, bool crc_res) {}
   bool     is_paging_opportunity(uint32_t tti, uint32_t* payload_len) { return false; }
   uint8_t* read_pdu_bcch_dlsch(const uint8_t enb_cc_idx, const uint32_t sib_index) { return nullptr; }
-  void     read_pdu_pcch(uint32_t tti_tx_dl, uint8_t* payload, uint32_t n_bytes) {}
+  uint8_t* read_pdu_bcch_dlsch(const uint8_t enb_cc_idx, const uint32_t sib_index, const uint32_t sib_segment_index)
+  {
+    return nullptr;
+  }
+  void read_pdu_pcch(uint32_t tti_tx_dl, uint8_t* payload, uint32_t n_bytes) {}
 };
 
 /**************************
@@ -71,7 +75,8 @@ class sched_result_stats
 public:
   explicit sched_result_stats(std::vector<srsenb::sched::cell_cfg_t> cell_params_) :
     cell_params(std::move(cell_params_))
-  {}
+  {
+  }
 
   void process_results(tti_point                                           tti_rx,
                        const std::vector<sched_interface::dl_sched_res_t>& dl_result,

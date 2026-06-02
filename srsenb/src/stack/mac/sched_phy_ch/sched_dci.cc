@@ -1,5 +1,5 @@
 /**
- * Copyright 2013-2021 Software Radio Systems Limited
+ * Copyright 2013-2023 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -260,8 +260,13 @@ bool generate_sib_dci(sched_interface::dl_sched_bc_t& bc,
                       uint32_t                        current_cfi)
 {
   bc           = {};
-  int tbs_bits = generate_ra_bc_dci_format1a_common(
-      bc.dci, SRSRAN_SIRNTI, tti_tx_dl, cell_params.cfg.sibs[sib_idx].len, rbg_range, cell_params, current_cfi);
+  int tbs_bits = generate_ra_bc_dci_format1a_common(bc.dci,
+                                                    SRSRAN_SIRNTI,
+                                                    tti_tx_dl,
+                                                    cell_params.cfg.sibs[sib_idx].get_length(),
+                                                    rbg_range,
+                                                    cell_params,
+                                                    current_cfi);
   if (tbs_bits < 0) {
     return false;
   }
@@ -331,6 +336,22 @@ bool generate_rar_dci(sched_interface::dl_sched_rar_t& rar,
   return true;
 }
 
+void generate_pdcch_order_dci(sched_interface::dl_sched_po_t& pdcch_order,
+                              tti_point                       tti_tx_dl,
+                              const sched_cell_params_t&      cell_params,
+                              uint32_t                        current_cfi)
+{
+  // Generate DCI Format1A PDCCH order content
+  pdcch_order.dci.format         = SRSRAN_DCI_FORMAT1A;
+  pdcch_order.dci.alloc_type     = SRSRAN_RA_ALLOC_TYPE2; // TODO: is this correct?
+  pdcch_order.dci.rnti           = pdcch_order.crnti;
+  pdcch_order.dci.is_pdcch_order = true;
+  pdcch_order.dci.preamble_idx   = pdcch_order.preamble_idx;
+  pdcch_order.dci.prach_mask_idx = pdcch_order.prach_mask_idx;
+
+  get_mac_logger().debug("PDCCH order: rnti=0x%x", pdcch_order.dci.rnti);
+}
+
 void log_broadcast_allocation(const sched_interface::dl_sched_bc_t& bc,
                               rbg_interval                          rbg_range,
                               const sched_cell_params_t&            cell_params)
@@ -352,8 +373,8 @@ void log_broadcast_allocation(const sched_interface::dl_sched_bc_t& bc,
         bc.dci.location.L,
         bc.dci.location.ncce,
         bc.dci.tb[0].rv,
-        cell_params.cfg.sibs[bc.index].len,
-        cell_params.cfg.sibs[bc.index].period_rf,
+        cell_params.cfg.sibs[bc.index].get_length(),
+        cell_params.cfg.sibs[bc.index].get_period_rf(),
         bc.dci.tb[0].mcs_idx);
   } else {
     get_mac_logger().info("SCHED: PCH, cc=%d, rbgs=%s, dci=(%d,%d), tbs=%d, mcs=%d",
@@ -391,6 +412,26 @@ void log_rar_allocation(const sched_interface::dl_sched_rar_t& rar, rbg_interval
                         rar.dci.location.L,
                         rar.dci.location.ncce,
                         srsran::to_c_str(str_buffer2));
+}
+
+void log_po_allocation(const sched_interface::dl_sched_po_t& pdcch_order,
+                       rbg_interval                          rbg_range,
+                       const sched_cell_params_t&            cell_params)
+{
+  if (not get_mac_logger().info.enabled()) {
+    return;
+  }
+
+  fmt::memory_buffer str_buffer;
+  fmt::format_to(str_buffer, "{}", rbg_range);
+
+  get_mac_logger().info("SCHED: PDCCH order, cc=%d, rbgs=%s, dci=(%d,%d), tbs=%d, mcs=%d",
+                        cell_params.enb_cc_idx,
+                        srsran::to_c_str(str_buffer),
+                        pdcch_order.dci.location.L,
+                        pdcch_order.dci.location.ncce,
+                        pdcch_order.tbs,
+                        pdcch_order.dci.tb[0].mcs_idx);
 }
 
 } // namespace srsenb

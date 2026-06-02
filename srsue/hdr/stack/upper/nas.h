@@ -1,5 +1,5 @@
 /**
- * Copyright 2013-2021 Software Radio Systems Limited
+ * Copyright 2013-2023 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -89,9 +89,9 @@ public:
   void timer_expired(uint32_t timeout_id) override;
 
 private:
-  rrc_interface_nas*    rrc  = nullptr;
-  usim_interface_nas*   usim = nullptr;
-  gw_interface_nas*     gw   = nullptr;
+  rrc_interface_nas*  rrc  = nullptr;
+  usim_interface_nas* usim = nullptr;
+  gw_interface_nas*   gw   = nullptr;
 
   bool running = false;
 
@@ -117,10 +117,10 @@ private:
   typedef std::pair<uint8_t, eps_bearer_t> eps_bearer_map_pair_t;
   eps_bearer_map_t                         eps_bearer;
 
-  bool         have_guti       = false;
-  bool         have_ctxt       = false;
-  bool         auth_request    = false;
-  uint8_t      current_sec_hdr = LIBLTE_MME_SECURITY_HDR_TYPE_PLAIN_NAS;
+  bool    have_guti       = false;
+  bool    have_ctxt       = false;
+  bool    auth_request    = false;
+  uint8_t current_sec_hdr = LIBLTE_MME_SECURITY_HDR_TYPE_PLAIN_NAS;
 
   const uint32_t max_attach_attempts    = 5; // Sec. 5.5.1.2.6
   uint32_t       attach_attempt_counter = 0;
@@ -153,8 +153,8 @@ private:
   const uint8_t ue_svn_oct2 = 0x3;
 
   // Security
-  bool    eia_caps[8]   = {};
-  bool    eea_caps[8]   = {};
+  bool eia_caps[8] = {};
+  bool eea_caps[8] = {};
 
   // Airplane mode simulation
   typedef enum { DISABLED = 0, ENABLED } airplane_mode_state_t;
@@ -177,12 +177,12 @@ private:
 
   // Parsers
   void parse_attach_accept(uint32_t lcid, srsran::unique_byte_buffer_t pdu);
-  void parse_attach_reject(uint32_t lcid, srsran::unique_byte_buffer_t pdu);
+  void parse_attach_reject(uint32_t lcid, srsran::unique_byte_buffer_t pdu, const uint8_t sec_hdr_type);
   void parse_authentication_request(uint32_t lcid, srsran::unique_byte_buffer_t pdu, const uint8_t sec_hdr_type);
   void parse_authentication_reject(uint32_t lcid, srsran::unique_byte_buffer_t pdu);
   void parse_identity_request(srsran::unique_byte_buffer_t pdu, const uint8_t sec_hdr_type);
   void parse_security_mode_command(uint32_t lcid, srsran::unique_byte_buffer_t pdu);
-  void parse_service_reject(uint32_t lcid, srsran::unique_byte_buffer_t pdu);
+  void parse_service_reject(uint32_t lcid, srsran::unique_byte_buffer_t pdu, const uint8_t sec_hdr_type);
   void parse_esm_information_request(uint32_t lcid, srsran::unique_byte_buffer_t pdu);
   void parse_emm_information(uint32_t lcid, srsran::unique_byte_buffer_t pdu);
   void parse_detach_request(uint32_t lcid, srsran::unique_byte_buffer_t pdu);

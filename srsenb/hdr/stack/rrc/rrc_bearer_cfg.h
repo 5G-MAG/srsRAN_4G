@@ -1,5 +1,5 @@
 /**
- * Copyright 2013-2021 Software Radio Systems Limited
+ * Copyright 2013-2023 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -102,12 +102,12 @@ public:
   /// Called after RRCReestablishmentComplete, to add E-RABs of old rnti
   void reestablish_bearers(bearer_cfg_handler&& old_rnti_bearers);
 
-  int  add_erab(uint8_t                                            erab_id,
-                const asn1::s1ap::erab_level_qos_params_s&         qos,
-                const asn1::bounded_bitstring<1, 160, true, true>& addr,
-                uint32_t                                           teid_out,
-                srsran::const_span<uint8_t>                        nas_pdu,
-                asn1::s1ap::cause_c&                               cause);
+  int  addmod_erab(uint8_t                                            erab_id,
+                   const asn1::s1ap::erab_level_qos_params_s&         qos,
+                   const asn1::bounded_bitstring<1, 160, true, true>& addr,
+                   uint32_t                                           teid_out,
+                   srsran::const_span<uint8_t>                        nas_pdu,
+                   asn1::s1ap::cause_c&                               cause);
   int  release_erab(uint8_t erab_id);
   void release_erabs();
   int  modify_erab(uint8_t                                    erab_id,
@@ -123,6 +123,7 @@ public:
                                              const gtpu_interface_rrc::bearer_props* props = nullptr);
   void                       rem_gtpu_bearer(uint32_t erab_id);
   void                       fill_pending_nas_info(asn1::rrc::rrc_conn_recfg_r8_ies_s* msg);
+  void                       clear_pending_nas_info();
 
   const std::map<uint8_t, erab_t>&        get_erabs() const { return erabs; }
   const asn1::rrc::drb_to_add_mod_list_l& get_established_drbs() const { return current_drbs; }
@@ -135,6 +136,9 @@ private:
   uint16_t              rnti = 0;
   const rrc_cfg_t*      cfg  = nullptr;
   gtpu_interface_rrc*   gtpu = nullptr;
+
+  // NAS PDUs being currently sent.
+  std::vector<uint32_t> erab_ids_with_pending_nas_pdus;
 
   // last cfg
   asn1::rrc::drb_to_add_mod_list_l current_drbs;
