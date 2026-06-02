@@ -2730,9 +2730,6 @@ struct sib_type13_r9_s {
   // group 2
   copy_ptr<mbsfn_area_info_list_r17_l> mbsfn_area_info_list_r17;
 
-  bool                      mbsfn_area_info_list_r16_present = false;
-  mbsfn_area_info_list_r16_l mbsfn_area_info_list_r16;
-
   // sequence methods
   SRSASN_CODE pack(bit_ref& bref) const;
   SRSASN_CODE unpack(cbit_ref& bref);
