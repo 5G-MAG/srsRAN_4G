@@ -2097,8 +2097,6 @@ struct meas_idle_cfg_sib_nr_r16_s {
   void        to_json(json_writer& j) const;
 };
 
-using mbsfn_area_info_list_r16_l = dyn_array<mbsfn_area_info_r16_s>;
-
 // MeasIdleConfigSIB-r15 ::= SEQUENCE
 struct meas_idle_cfg_sib_r15_s {
   bool                     ext = false;

@@ -230,11 +230,12 @@ void rlc::write_sdu_mch(uint32_t lcid, unique_byte_buffer_t sdu)
 bool rlc::rb_is_um(uint32_t lcid)
 {
   bool ret = false;
+  uint32_t mch_idx = 0; // [TODO]
 
   if (valid_lcid(lcid)) {
     ret = rlc_array.at(lcid)->get_mode() == rlc_mode_t::um;
-  } else if (valid_lcid_mrb(lcid)) {
-    ret = rlc_array_mrb.at(lcid)->get_mode() == rlc_mode_t::um;
+  } else if (valid_lcid_mrb(mch_idx, lcid)) {
+    ret = rlc_array_mrb.at(mch_idx).at(lcid)->get_mode() == rlc_mode_t::um;
   } else {
     logger.warning("LCID %d doesn't exist.", lcid);
   }
@@ -254,10 +255,11 @@ void rlc::discard_sdu(uint32_t lcid, uint32_t discard_sn)
 
 bool rlc::sdu_queue_is_full(uint32_t lcid)
 {
+  uint32_t mch_idx = 0; // [TODO]
   if (valid_lcid(lcid)) {
     return rlc_array.at(lcid)->sdu_queue_is_full();
-  } else if (valid_lcid_mrb(lcid)) {
-    return rlc_array_mrb.at(lcid)->sdu_queue_is_full();
+  } else if (valid_lcid_mrb(mch_idx, lcid)) {
+    return rlc_array_mrb.at(mch_idx).at(lcid)->sdu_queue_is_full();
   }
   logger.warning("RLC LCID %d doesn't exist. Ignoring queue check", lcid);
   return false;
