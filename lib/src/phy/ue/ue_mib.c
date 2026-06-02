@@ -31,7 +31,7 @@
 #include "srsran/phy/utils/debug.h"
 #include "srsran/phy/utils/vector.h"
 
-#define MIB_BUFFER_MAX_SAMPLES_FOR_PRB(prb)   (8 * SRSRAN_SF_LEN_PRB(prb))
+#define MIB_BUFFER_MAX_SAMPLES_FOR_PRB(prb)   (43 * SRSRAN_SF_LEN_PRB(prb))
 #define MIB_BUFFER_MAX_SAMPLES                MIB_BUFFER_MAX_SAMPLES_FOR_PRB(SRSRAN_UE_MIB_NOF_PRB)
 
 int srsran_ue_mib_init(srsran_ue_mib_t* q, cf_t* in_buffer, uint32_t max_prb)
