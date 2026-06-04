@@ -357,9 +357,14 @@ static int estimate_pdcch_pcfich(srsran_ue_dl_t* q, srsran_dl_sf_cfg_t* sf, srsr
     srsran_chest_dl_estimate_cfg(&q->chest, sf, &cfg->chest_cfg, q->sf_symbols, &q->chest_res);
 
     /* First decode PCFICH and obtain CFI */
-    if (srsran_pcfich_decode(&q->pcfich, sf, &q->chest_res, q->sf_symbols, &cfi_corr) < 0) {
-      ERROR("Error decoding PCFICH");
-      return SRSRAN_ERROR;
+    if (sf->cfi == 0){ // If the CFI wasn't obtained from the MIB, decode de PFICH
+      if (srslte_pcfich_decode(&q->pcfich, sf, &q->chest_res, q->sf_symbols, &cfi_corr) < 0) {
+        ERROR("Error decoding PCFICH\n");
+        return SRSLTE_ERROR;
+      }
+      INFO("Decoded CFI=%d with correlation %.2f, sf_idx=%d", sf->cfi, cfi_corr, sf->tti % 10);
+    } else {
+      INFO("Decoded CFI=%d from MIB, sf_idx=%d", sf->cfi, sf->tti % 10);
     }
 
     if (q->cell.frame_type == SRSRAN_TDD && ((sf->tti % 10) == 1 || (sf->tti % 10) == 6) && sf->cfi == 3) {
@@ -372,7 +377,6 @@ static int estimate_pdcch_pcfich(srsran_ue_dl_t* q, srsran_dl_sf_cfg_t* sf, srsr
       return false;
     }
 
-    INFO("Decoded CFI=%d with correlation %.2f, sf_idx=%d", sf->cfi, cfi_corr, sf->tti % 10);
 
     return SRSRAN_SUCCESS;
   } else {

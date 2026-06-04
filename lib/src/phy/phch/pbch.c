@@ -313,9 +313,11 @@ void srsran_pbch_mib_unpack(uint8_t* msg, srsran_cell_t* cell, uint32_t* sfn)
  * @param[in] msg PBCH in an unpacked bit array of size 24
  * @param[out] sfn System frame number
  * @param[out] cell MIB information about PHICH and system bandwidth will be saved here
+ * @param[out] CFI CFI value from the MIB (Rel-16).
  */
 void srsran_pbch_mib_mbms_unpack(uint8_t* msg, srsran_cell_t* cell, uint32_t* sfn, uint32_t* additional_non_mbsfn_subframes, int8_t override_prb)
 {
+  uint32_t tmp; 
   uint32_t bw_idx = srsran_bit_pack(&msg, 3);
   switch (bw_idx) {
     case 0:
@@ -336,9 +338,11 @@ void srsran_pbch_mib_mbms_unpack(uint8_t* msg, srsran_cell_t* cell, uint32_t* sf
     *sfn = srsran_bit_pack(&msg, 6) << 4;
   }
 
+  tmp = srsran_bit_pack(&msg, 2);
   if (additional_non_mbsfn_subframes) {
-    *additional_non_mbsfn_subframes = *msg++;
-  }
+    *additional_non_mbsfn_subframes = tmp; 
+  } 
+  cell->cfi = srsran_bit_pack(&msg, 2);
 }
 
 /**
