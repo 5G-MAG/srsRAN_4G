@@ -102,7 +102,7 @@ int srsran_pbch_cp(cf_t* input, cf_t* output, srsran_cell_t cell, bool put, bool
     }
 
     /* symbol 3 slot0 */
-    if (SRSLTE_CP_ISNORM(cell.cp)) { // This repetition is only present for normal CP
+    if (SRSRAN_CP_ISNORM(cell.cp)) { // This repetition is only present for normal CP
       prb_cp(&input, &output, 6);
       if (put) {
         output += cell.nof_prb * SRSRAN_NRE - 2 * 36;
@@ -127,38 +127,38 @@ int srsran_pbch_cp(cf_t* input, cf_t* output, srsran_cell_t cell, bool put, bool
     }
 
     /* symbol 4 NORM CP */
-    if (SRSLTE_CP_ISNORM(cell.cp)) {
+    if (SRSRAN_CP_ISNORM(cell.cp)) {
       prb_cp_ref(&input, &output, cell.id % 3, 4, 4 * 6, put);
       if (put) {
-        output += cell.nof_prb * SRSLTE_NRE - 2 * 36 + (cell.id % 3 == 2 ? 1 : 0);
+        output += cell.nof_prb * SRSRAN_NRE - 2 * 36 + (cell.id % 3 == 2 ? 1 : 0);
       } else {
-        input += cell.nof_prb * SRSLTE_NRE - 2 * 36 + (cell.id % 3 == 2 ? 1 : 0);
+        input += cell.nof_prb * SRSRAN_NRE - 2 * 36 + (cell.id % 3 == 2 ? 1 : 0);
       }
     }
     
     /* symbol 5 & 6 NORM CP, or symbol 4 & 5 EXT CP */
-    if (SRSLTE_CP_ISNORM(cell.cp)) {
+    if (SRSRAN_CP_ISNORM(cell.cp)) {
       for (i = 0; i < 2; i++) {
         prb_cp(&input, &output, 6);
         if (put) {
-          output += cell.nof_prb * SRSLTE_NRE - 2 * 36;
+          output += cell.nof_prb * SRSRAN_NRE - 2 * 36;
         } else {
-          input += cell.nof_prb * SRSLTE_NRE - 2 * 36;
+          input += cell.nof_prb * SRSRAN_NRE - 2 * 36;
         }
       }
     } else {
       prb_cp(&input, &output, 6);
       if (put) {
-        output += cell.nof_prb * SRSLTE_NRE - 2 * 36;
+        output += cell.nof_prb * SRSRAN_NRE - 2 * 36;
       } else {
-        input += cell.nof_prb * SRSLTE_NRE - 2 * 36;
+        input += cell.nof_prb * SRSRAN_NRE - 2 * 36;
       }
 
       prb_cp_ref(&input, &output, cell.id % 3, 4, 4 * 6, put);
       if (put) {
-        output += cell.nof_prb * SRSLTE_NRE - 2 * 36 + (cell.id % 3 == 2 ? 1 : 0);
+        output += cell.nof_prb * SRSRAN_NRE - 2 * 36 + (cell.id % 3 == 2 ? 1 : 0);
       } else {
-        input += cell.nof_prb * SRSLTE_NRE - 2 * 36 + (cell.id % 3 == 2 ? 1 : 0);
+        input += cell.nof_prb * SRSRAN_NRE - 2 * 36 + (cell.id % 3 == 2 ? 1 : 0);
       }
     }
 
@@ -379,7 +379,7 @@ int srsran_set_phase_rep_pbch(cf_t* theta, srsran_cp_t cp, uint32_t cell_id, boo
     }
     for (uint32_t kp = 0; kp < 6 * SRSRAN_NRE; kp++){
       if((l == ((SRSRAN_CP_ISNORM(cp)) ? 1 : 0)) || l == 2){
-        if((vo == (kp % 3))){ // We don't need to compute the CS-RS phases.
+        if(vo == (kp % 3)){ // We don't need to compute the CS-RS phases.
           continue;
         }
       }
@@ -682,7 +682,7 @@ int srsran_pbch_decode(srsran_pbch_t*         q,
     cf_t* slot1_symbols = &sf_symbols[0][SRSRAN_SLOT_LEN_RE(q->cell.nof_prb, q->cell.cp)];
     cf_t* slot0_symbols = &sf_symbols[0][0];
 
-    cf_t* ce_slot0[SRSLTE_MAX_PORTS];
+    cf_t* ce_slot0[SRSRAN_MAX_PORTS];
     cf_t* ce_slot1[SRSRAN_MAX_PORTS];
     for (int i = 0; i < SRSRAN_MAX_PORTS; i++) {
       ce_slot1[i] = &channel->ce[i][0][SRSRAN_SLOT_LEN_RE(q->cell.nof_prb, q->cell.cp)];

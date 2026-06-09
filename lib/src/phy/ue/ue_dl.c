@@ -358,9 +358,9 @@ static int estimate_pdcch_pcfich(srsran_ue_dl_t* q, srsran_dl_sf_cfg_t* sf, srsr
 
     /* First decode PCFICH and obtain CFI */
     if (sf->cfi == 0){ // If the CFI wasn't obtained from the MIB, decode de PFICH
-      if (srslte_pcfich_decode(&q->pcfich, sf, &q->chest_res, q->sf_symbols, &cfi_corr) < 0) {
+      if (srsran_pcfich_decode(&q->pcfich, sf, &q->chest_res, q->sf_symbols, &cfi_corr) < 0) {
         ERROR("Error decoding PCFICH\n");
-        return SRSLTE_ERROR;
+        return SRSRAN_ERROR;
       }
       INFO("Decoded CFI=%d with correlation %.2f, sf_idx=%d", sf->cfi, cfi_corr, sf->tti % 10);
     } else {
