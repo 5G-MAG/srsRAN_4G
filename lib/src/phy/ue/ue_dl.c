@@ -465,7 +465,7 @@ static int dci_blind_search(srsran_ue_dl_t*     q,
 {
   uint32_t nof_dci = 0;
   if (rnti) {
-    for (int l = 0; l < search_space->nof_locations; l++) {
+    for (int l = search_space->nof_locations - 1; l >= 0; l--) {
       if (nof_dci >= SRSRAN_MAX_DCI_MSG) {
         ERROR("Can't store more DCIs in buffer");
         return nof_dci;

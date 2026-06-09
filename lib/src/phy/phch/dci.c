@@ -1441,7 +1441,7 @@ int srsran_dci_location_set(srsran_dci_location_t* c, uint32_t L, uint32_t nCCE)
 
 bool srsran_dci_location_isvalid(srsran_dci_location_t* c)
 {
-  if (c->L <= 3 && c->ncce <= 87) {
+  if (c->L <= 4 && c->ncce <= 87) {
     return true;
   } else {
     return false;
