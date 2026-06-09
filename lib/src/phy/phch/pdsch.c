@@ -110,7 +110,7 @@ static inline bool pdsch_cp_skip_symbol(const srsran_cell_t*        cell,
       return true;
     }
 
-    // Repeated PBCH symbols.
+    // Repeated PBCH symbols. // TODO For 3 MHz (15 PRBs) the PBCH is only repeated at sfn % 8  == 0, but we asssume we are going to receive at least 5 MHz and in that case the repetition is in every CAS.
     if (cell->mbms_dedicated && cell->nof_prb > 6 && cell->is_mbms_r16 && sf_idx == 0 && ((s == 0 && l == 3) || (s == 1 && l == 4 && cell->cp == SRSRAN_CP_NORM) || (s == 1 && l == 5) || (s == 1 && l == 6 && cell->cp == SRSRAN_CP_NORM))) {
       return true;
     }

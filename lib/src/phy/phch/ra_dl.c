@@ -76,12 +76,22 @@ uint32_t ra_re_x_prb(const srsran_cell_t* cell, srsran_dl_sf_cfg_t* sf, uint32_t
       if (subframe == 0) {
         if (slot == 0) {
           re = (nof_symbols - nof_ctrl_symbols - 2) * SRSRAN_NRE;
+          if (cell->nof_prb > 6 && cell->is_mbms_r16){
+            re -= (SRSRAN_CP_ISEXT(cp_) ? 1 : 2) * SRSRAN_NRE;
+            skip_refs = false;
+          }
         } else {
           if (SRSRAN_CP_ISEXT(cp_)) {
             re        = (nof_symbols - 4) * SRSRAN_NRE;
+            if (cell->nof_prb > 6 && cell->is_mbms_r16){
+              re -= 2 * SRSRAN_NRE;
+            }
             skip_refs = false;
           } else {
             re = (nof_symbols - 4) * SRSRAN_NRE + 2 * cell->nof_ports;
+            if (cell->nof_prb > 6 && cell->is_mbms_r16){
+              re -= 3 * SRSRAN_NRE;
+            }
           }
         }
       } else if (subframe == 5) {
@@ -92,8 +102,16 @@ uint32_t ra_re_x_prb(const srsran_cell_t* cell, srsran_dl_sf_cfg_t* sf, uint32_t
       if ((cell->nof_prb % 2) && (prb_idx == cell->nof_prb / 2 - 3 || prb_idx == cell->nof_prb / 2 + 3)) {
         if (slot == 0) {
           re += 2 * SRSRAN_NRE / 2;
+          if (cell->nof_prb > 6 && cell->is_mbms_r16){
+            re += (SRSRAN_CP_ISEXT(cp_) ? 1 : 2 ) * SRSRAN_NRE / 2;
+            re -= cell->nof_ports > 2 ? 2 : cell->nof_ports;
+          }
         } else if (subframe == 0) {
           re += 4 * SRSRAN_NRE / 2 - cell->nof_ports;
+          if (cell->nof_prb > 6 && cell->is_mbms_r16){
+            re += (SRSRAN_CP_ISEXT(cp_) ? 2 : 3 ) * SRSRAN_NRE / 2;
+            re -= cell->nof_ports > 2 ? 2 : cell->nof_ports;
+          }
           if (SRSRAN_CP_ISEXT(cp_)) {
             re -= cell->nof_ports > 2 ? 2 : cell->nof_ports;
           }
