@@ -94,6 +94,7 @@ static inline bool pdsch_cp_skip_symbol(const srsran_cell_t*        cell,
       if (s == 0 && (sf_idx == 0 || sf_idx == 5) && (l >= grant->nof_symb_slot[s] - 2)) {
         return true;
       }
+      
     } else {
       // TDD SSS
       if (s == 1 && (sf_idx == 0 || sf_idx == 5) && (l >= grant->nof_symb_slot[s] - 1)) {
@@ -106,6 +107,11 @@ static inline bool pdsch_cp_skip_symbol(const srsran_cell_t*        cell,
     }
     // PBCH same in FDD and TDD
     if (s == 1 && sf_idx == 0 && l < 4) {
+      return true;
+    }
+
+    // Repeated PBCH symbols.
+    if (cell->mbms_dedicated && cell->nof_prb > 6 && cell->is_mbms_r16 && sf_idx == 0 && ((s == 0 && l == 3) || (s == 1 && l == 4 && cell->cp == SRSRAN_CP_NORM) || (s == 1 && l == 5) || (s == 1 && l == 6 && cell->cp == SRSRAN_CP_NORM))) {
       return true;
     }
   }

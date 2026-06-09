@@ -50,18 +50,22 @@
 #define SRSRAN_BCH_ENCODED_LEN 3 * (SRSRAN_BCH_PAYLOADCRC_LEN)
 
 #define SRSRAN_PBCH_MAX_RE 256 // make it avx2-aligned
+#define SRSRAN_MAX_NOF_REP_PBCH_SYMBOLS 5
+#define SRSRAN_NOF_REP_PBCH_SYMBOLS(cp) (cp == SRSRAN_CP_NORM ? SRSRAN_MAX_NOF_REP_PBCH_SYMBOLS : 3)
 
 /* PBCH object */
 typedef struct SRSRAN_API {
   srsran_cell_t cell;
 
   uint32_t nof_symbols;
+  uint32_t nof_rep_symbols;
 
   /* buffers */
   cf_t*    ce[SRSRAN_MAX_PORTS];
   cf_t*    symbols[SRSRAN_MAX_PORTS];
   cf_t*    x[SRSRAN_MAX_PORTS];
   cf_t*    d;
+  cf_t*    theta;
   float*   llr;
   float*   temp;
   float    rm_f[SRSRAN_BCH_ENCODED_LEN];
