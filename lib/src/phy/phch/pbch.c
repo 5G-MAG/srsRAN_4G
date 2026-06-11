@@ -638,7 +638,7 @@ int srsran_rel16_pbch_mrc(srsran_pbch_t*         q,
                           int nof_rep_symbols, 
                           float noise_estimate)
 {
-  int threshold_corr = 75, ret = 0;
+  int threshold_corr = 40, ret = 0; // TODO choose a proper threshold
   int offset = (nof_rep_symbols == PBCH_RE_CP_NORM_REP ? 0 : 48); // For extended CP, the first PBCH OFDM symbol isn't repeated
   int offset_rep = (nof_rep_symbols == PBCH_RE_CP_NORM_REP ? 72 : 0); // For normal CP, the first repeated symbol is the 10th, and then the 7, 8, 9 and 10, ignore the first 10th repetition
   float abs = 0; 
