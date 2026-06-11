@@ -341,7 +341,7 @@ void srsran_pbch_free(srsran_pbch_t* q)
     free(q->d);
   }
   if (q->theta) {
-    free(q->d);
+    free(q->theta);
   }
   bzero(q, sizeof(srsran_pbch_t));
 }
@@ -771,6 +771,10 @@ int srsran_pbch_decode(srsran_pbch_t*         q,
           /* no need for layer demapping */
           srsran_predecoding_single(q->symbols[0], q->ce[0], q->d, NULL,  q->nof_symbols + q->nof_rep_symbols, 1.0f, channel->noise_estimate);
           srsran_rel16_pbch_mrc(q->d, q->ce[0], q->symbols[0], q->theta, q->nof_symbols, q->nof_rep_symbols, channel->noise_estimate);
+          if (SRSRAN_VERBOSE_ISDEBUG()) {
+            DEBUG("SAVED FILE pbch_symbols.dat: symbols after equalization and dephase (slot1)\n");
+            srsran_vec_save_file("pbch_symbols_eq_dp.bin", q->d, (q->nof_symbols + q->nof_rep_symbols) * sizeof(cf_t));
+          }
         } else {
           srsran_predecoding_diversity(q->symbols[0], q->ce, x, nant, q->nof_symbols, 1.0f);
           srsran_layerdemap_diversity(x, q->d, nant, q->nof_symbols / nant);
