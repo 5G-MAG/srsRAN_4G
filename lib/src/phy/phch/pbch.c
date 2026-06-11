@@ -629,7 +629,14 @@ int decode_frame(srsran_pbch_t* q, uint32_t src, uint32_t dst, uint32_t n, uint3
   }
 }
 
-int srsran_rel16_pbch_mrc(cf_t* y, cf_t* h, cf_t* x, cf_t* theta, int nof_symbols, int nof_rep_symbols, float noise_estimate)
+int srsran_rel16_pbch_mrc(srsran_pbch_t*         q,
+                          cf_t* y, 
+                          cf_t* h, 
+                          cf_t* x, 
+                          cf_t* theta, 
+                          int nof_symbols, 
+                          int nof_rep_symbols, 
+                          float noise_estimate)
 {
   int threshold_corr = 75, ret = 0;
   int offset = (nof_rep_symbols == PBCH_RE_CP_NORM_REP ? 0 : 48); // For extended CP, the first PBCH OFDM symbol isn't repeated
@@ -641,6 +648,7 @@ int srsran_rel16_pbch_mrc(cf_t* y, cf_t* h, cf_t* x, cf_t* theta, int nof_symbol
   srsran_vec_abs_cf(&corr, &abs, 1);
 
   if(abs>threshold_corr){ // Check if it's a rel-16 PBCH
+    q->cell.is_mbms_r16 = true;
     cf_t r1 = 0, r2 = 0, hh = 0; // Maximum ratio combining (2x1)
     ret = 1;
     for (int i = offset; i < nof_symbols; i++) {
@@ -770,7 +778,7 @@ int srsran_pbch_decode(srsran_pbch_t*         q,
         if (nant == 1) {
           /* no need for layer demapping */
           srsran_predecoding_single(q->symbols[0], q->ce[0], q->d, NULL,  q->nof_symbols + q->nof_rep_symbols, 1.0f, channel->noise_estimate);
-          srsran_rel16_pbch_mrc(q->d, q->ce[0], q->symbols[0], q->theta, q->nof_symbols, q->nof_rep_symbols, channel->noise_estimate);
+          srsran_rel16_pbch_mrc(q, q->d, q->ce[0], q->symbols[0], q->theta, q->nof_symbols, q->nof_rep_symbols, channel->noise_estimate);
           if (SRSRAN_VERBOSE_ISDEBUG()) {
             DEBUG("SAVED FILE pbch_symbols.dat: symbols after equalization and dephase (slot1)\n");
             srsran_vec_save_file("pbch_symbols_eq_dp.bin", q->d, (q->nof_symbols + q->nof_rep_symbols) * sizeof(cf_t));
