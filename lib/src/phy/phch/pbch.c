@@ -386,6 +386,7 @@ int srsran_set_phase_rep_pbch(cf_t* theta, srsran_cp_t cp, uint32_t cell_id, boo
       theta[i++] = cexp(pow(-1, inv)*(M_PI * I * seq.c[2*kp])/2)*cexp(pow(-1, inv)*M_PI * I * seq.c[2*kp + 1]);
     }
   }
+  srsran_sequence_free(&seq); // We don't need anymore this sequence.
   return SRSRAN_SUCCESS;
 }
 
