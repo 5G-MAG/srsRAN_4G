@@ -33,10 +33,10 @@
 #include "srsran/phy/utils/debug.h"
 #include "srsran/phy/utils/vector.h"
 
-#define MAX_TIME_OFFSET 3840
+#define MAX_TIME_OFFSET 128 //3840
 
 #define TRACK_MAX_LOST 3
-#define TRACK_FRAME_SIZE 3840
+#define TRACK_FRAME_SIZE 32 //3840
 #define FIND_NOF_AVG_FRAMES 4
 
 #define PSS_OFFSET                                                                                                     \
