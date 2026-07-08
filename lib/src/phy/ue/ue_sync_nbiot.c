@@ -1,5 +1,5 @@
 /**
- * Copyright 2013-2021 Software Radio Systems Limited
+ * Copyright 2013-2023 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -37,7 +37,7 @@
 #define TRACK_MAX_LOST 4
 #define TRACK_FRAME_SIZE 32
 #define FIND_NOF_AVG_FRAMES 4
-#define DEFAULT_SFO_EMA_COEFF 0.1
+#define DEFAULT_SFO_EMA_COEFF 0.9
 
 static cf_t  dummy_buffer_nbiot0[15 * 2048 / 2];
 static cf_t  dummy_buffer_nbiot1[15 * 2048 / 2];

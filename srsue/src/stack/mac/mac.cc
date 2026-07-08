@@ -1,5 +1,5 @@
 /**
- * Copyright 2013-2021 Software Radio Systems Limited
+ * Copyright 2013-2023 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -50,7 +50,6 @@ mac::mac(const char* logname, ext_task_sched_handle task_sched_) :
   dl_harq.at(PCELL_CC_IDX) = dl_harq_entity_ptr(new dl_harq_entity(PCELL_CC_IDX));
 
   srsran_softbuffer_rx_init(&pch_softbuffer, 100);
-  srsran_softbuffer_rx_init(&mch_softbuffer, 100);
 
   // Keep initialising members
   bzero(&metrics, sizeof(mac_metrics_t));
@@ -62,7 +61,6 @@ mac::~mac()
   stop();
 
   srsran_softbuffer_rx_free(&pch_softbuffer);
-  srsran_softbuffer_rx_free(&mch_softbuffer);
 }
 
 bool mac::init(phy_interface_mac_lte* phy, rlc_interface_mac* rlc, rrc_interface_mac* rrc)
@@ -333,12 +331,12 @@ void mac::bch_decoded_ok(uint32_t cc_idx, uint8_t* payload, uint32_t len)
   }
 }
 
-void mac::mch_decoded(uint32_t len, bool crc)
+void mac::mch_decoded(uint32_t len, bool crc, uint8_t* payload)
 {
   // Parse MAC header
   if (crc) {
     mch_msg.init_rx(len);
-    mch_msg.parse_packet(mch_payload_buffer);
+    mch_msg.parse_packet(payload);
     while (mch_msg.next()) {
       for (uint32_t i = 0; i < phy_mbsfn_cfg.nof_mbsfn_services; i++) {
         if (srsran::mch_lcid::MCH_SCHED_INFO == mch_msg.get()->mch_ce_type()) {
@@ -352,11 +350,11 @@ void mac::mch_decoded(uint32_t len, bool crc)
       }
     }
 
-    demux_unit.push_pdu_mch(mch_payload_buffer, len);
+    demux_unit.push_pdu_mch(payload, len);
     process_pdus();
 
     if (pcap) {
-      pcap->write_dl_mch(mch_payload_buffer, len, true, phy_h->get_current_tti(), 0);
+      pcap->write_dl_mch(payload, len, true, phy_h->get_current_tti(), 0);
     }
 
     std::lock_guard<std::mutex> lock(metrics_mutex);
@@ -371,7 +369,10 @@ void mac::mch_decoded(uint32_t len, bool crc)
 
 void mac::tb_decoded(uint32_t cc_idx, mac_grant_dl_t grant, bool ack[SRSRAN_MAX_CODEWORDS])
 {
-  if (SRSRAN_RNTI_ISRAR(grant.rnti)) {
+  if (grant.is_pdcch_order) {
+    ra_procedure.set_config_ded(grant.preamble_idx, grant.prach_mask_idx);
+    ra_procedure.start_pdcch_order();
+  } else if (SRSRAN_RNTI_ISRAR(grant.rnti)) {
     if (ack[0]) {
       ra_procedure.tb_decoded_ok(cc_idx, grant.tti);
     }
@@ -439,6 +440,9 @@ void mac::new_grant_dl(uint32_t                               cc_idx,
       action->tb[0].rv            = grant.tb[0].rv;
       srsran_softbuffer_rx_reset_cb(&pch_softbuffer, 1);
     }
+  } else if (grant.is_pdcch_order) {
+    // if the grant is a PDCCH order then there is no associated PDSCH
+    action->tb[0].enabled = false;
   } else if (!(grant.rnti == SRSRAN_SIRNTI && cc_idx != 0)) {
     // If PDCCH for C-RNTI and RA procedure in Contention Resolution, notify it
     if (grant.rnti == uernti.get_crnti() && ra_procedure.is_contention_resolution()) {
@@ -524,14 +528,6 @@ void mac::new_grant_ul(uint32_t                               cc_idx,
   } // end of holding metrics mutex
 }
 
-void mac::new_mch_dl(const srsran_pdsch_grant_t& phy_grant, tb_action_dl_t* action)
-{
-  action->generate_ack        = false;
-  action->tb[0].enabled       = true;
-  action->tb[0].payload       = mch_payload_buffer;
-  action->tb[0].softbuffer.rx = &mch_softbuffer;
-  srsran_softbuffer_rx_reset_cb(&mch_softbuffer, 1);
-}
 
 void mac::setup_timers(int time_alignment_timer)
 {
@@ -674,11 +670,11 @@ void mac::get_metrics(mac_metrics_t m[SRSRAN_MAX_CARRIERS])
     dl_avg_ret /= dl_avg_ret_count;
   }
 
-  Info("DL retx: %.2f \%%, perpkt: %.2f, UL retx: %.2f \%% perpkt: %.2f",
-       rx_pkts ? ((float)100 * rx_errors / rx_pkts) : 0.0f,
-       dl_avg_ret,
-       tx_pkts ? ((float)100 * tx_errors / tx_pkts) : 0.0f,
-       ul_harq.at(PCELL_CC_IDX)->get_average_retx());
+  Debug("DL retx: %.2f \%%, perpkt: %.2f, UL retx: %.2f \%% perpkt: %.2f",
+        rx_pkts ? ((float)100 * rx_errors / rx_pkts) : 0.0f,
+        dl_avg_ret,
+        tx_pkts ? ((float)100 * tx_errors / tx_pkts) : 0.0f,
+        ul_harq.at(PCELL_CC_IDX)->get_average_retx());
 
   metrics[PCELL_CC_IDX].ul_buffer = (int)bsr_procedure.get_buffer_state();
   memcpy(m, metrics, sizeof(mac_metrics_t) * SRSRAN_MAX_CARRIERS);

@@ -1,5 +1,5 @@
 /**
- * Copyright 2013-2021 Software Radio Systems Limited
+ * Copyright 2013-2023 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -142,6 +142,7 @@ typedef struct {
   srsran::CIPHERING_ALGORITHM_ID_ENUM cipher_algo;
   srsran::INTEGRITY_ALGORITHM_ID_ENUM integ_algo;
   bool                                request_imeisv;
+  uint16_t                            lac;
 } nas_init_t;
 
 typedef struct {
@@ -225,6 +226,7 @@ public:
 
   /* Uplink NAS messages handling */
   bool handle_attach_request(srsran::byte_buffer_t* nas_rx);
+  bool handle_pdn_connectivity_request(srsran::byte_buffer_t* nas_rx);
   bool handle_authentication_response(srsran::byte_buffer_t* nas_rx);
   bool handle_security_mode_complete(srsran::byte_buffer_t* nas_rx);
   bool handle_attach_complete(srsran::byte_buffer_t* nas_rx);
@@ -246,7 +248,7 @@ public:
   bool pack_attach_accept(srsran::byte_buffer_t* nas_buffer);
 
   /* Security functions */
-  bool integrity_check(srsran::byte_buffer_t* pdu);
+  bool integrity_check(srsran::byte_buffer_t* pdu, bool warn_failure = true);
   bool short_integrity_check(srsran::byte_buffer_t* pdu);
   void integrity_generate(srsran::byte_buffer_t* pdu, uint8_t* mac);
   void cipher_decrypt(srsran::byte_buffer_t* pdu);
@@ -279,6 +281,7 @@ private:
   std::string m_full_net_name;
   std::string m_short_net_name;
   bool        m_request_imeisv = false;
+  uint16_t    m_lac            = 0;
 
   // Timers timeout values
   uint16_t m_t3413 = 0;

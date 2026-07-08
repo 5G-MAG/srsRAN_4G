@@ -1,5 +1,5 @@
 /**
- * Copyright 2013-2021 Software Radio Systems Limited
+ * Copyright 2013-2023 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -53,7 +53,7 @@ public:
     virtual void pushing(const myobj& obj) = 0;
   };
 
-  explicit block_queue<myobj>(int capacity_ = -1)
+  explicit block_queue(int capacity_ = -1)
   {
     pthread_mutex_init(&mutex, NULL);
     pthread_cond_init(&cv_empty, NULL);
@@ -63,6 +63,7 @@ public:
     enable           = true;
     num_threads      = 0;
   }
+
   ~block_queue()
   {
     // Unlock threads waiting at push or pop
@@ -104,6 +105,8 @@ public:
     return value;
   }
 
+  bool timedwait_pop(myobj* value, const struct timespec* abstime) { return pop_(value, true, abstime); }
+
   bool empty()
   { // queue is empty?
     pthread_mutex_lock(&mutex);
@@ -139,7 +142,7 @@ public:
   }
 
 private:
-  bool pop_(myobj* value, bool block)
+  bool pop_(myobj* value, bool block, const struct timespec* abstime = nullptr)
   {
     if (!enable) {
       return false;
@@ -151,7 +154,13 @@ private:
       goto exit;
     }
     while (q.empty() && enable) {
-      pthread_cond_wait(&cv_empty, &mutex);
+      if (abstime == nullptr) {
+        pthread_cond_wait(&cv_empty, &mutex);
+      } else {
+        if (pthread_cond_timedwait(&cv_empty, &mutex, abstime)) {
+          goto exit;
+        }
+      }
     }
     if (!enable) {
       goto exit;

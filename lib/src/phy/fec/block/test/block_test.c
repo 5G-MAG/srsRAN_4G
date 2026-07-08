@@ -1,5 +1,5 @@
 /**
- * Copyright 2013-2021 Software Radio Systems Limited
+ * Copyright 2013-2023 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -68,7 +68,7 @@ void parse_args(int argc, char** argv)
 int test(uint32_t block_size)
 {
   struct timeval t[3]                               = {};
-  uint8_t        tx[SRSRAN_FEC_BLOCK_MAX_NOF_BITS]  = {};
+  uint8_t        tx[SRSRAN_FEC_BLOCK_MAX_NOF_BITS + 1]  = {};
   uint8_t        rx[SRSRAN_FEC_BLOCK_MAX_NOF_BITS]  = {};
   uint8_t        encoded[4 * SRSRAN_FEC_BLOCK_SIZE] = {};
   int16_t        llr_i16[4 * SRSRAN_FEC_BLOCK_SIZE] = {};
@@ -135,7 +135,7 @@ int main(int argc, char** argv)
   parse_args(argc, argv);
   random_gen = srsran_random_init(seed);
 
-  for (uint32_t block_size = 3; block_size <= SRSRAN_FEC_BLOCK_MAX_NOF_BITS; block_size++) {
+  for (uint32_t block_size = 3; block_size < SRSRAN_FEC_BLOCK_MAX_NOF_BITS; block_size++) {
     if (test(block_size) < SRSRAN_SUCCESS) {
       break;
     }

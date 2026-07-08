@@ -1,5 +1,5 @@
 /**
- * Copyright 2013-2021 Software Radio Systems Limited
+ * Copyright 2013-2023 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -347,9 +347,9 @@ int srsran_symbol_sz_power2(uint32_t nof_prb)
     return 256;
   } else if (nof_prb <= 25) {
     return 512;
-  } else if (nof_prb <= 50) {
+  } else if (nof_prb <= 52) {
     return 1024;
-  } else if (nof_prb <= 75) {
+  } else if (nof_prb <= 79) {
     return 1536;
   } else if (nof_prb <= 110) {
     return 2048;
@@ -626,7 +626,8 @@ struct lte_band lte_bands[SRSRAN_NOF_LTE_BANDS] = {
     {68, 753, 67536, 132672, 55, SRSRAN_BAND_GEO_AREA_EMEA},
     {69, 2570, 67836, 0, 0, SRSRAN_BAND_GEO_AREA_EMEA},
     {70, 1995, 68336, 132972, 300, SRSRAN_BAND_GEO_AREA_NAR},
-    {71, 0, 68586, 133122, 0, SRSRAN_BAND_GEO_AREA_NAR} // dummy band to bound band 70 earfcn
+    {71, 617, 68586, 133122, -46, SRSRAN_BAND_GEO_AREA_NAR},
+    {72, 0, 68936, 133472, 0, SRSRAN_BAND_GEO_AREA_NAR} // dummy band to bound band 71 earfcn
 };
 
 int srsran_str2mimotype(char* mimo_type_str, srsran_tx_scheme_t* type)

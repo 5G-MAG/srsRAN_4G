@@ -1,5 +1,5 @@
 /**
- * Copyright 2013-2021 Software Radio Systems Limited
+ * Copyright 2013-2023 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -36,8 +36,10 @@
 #include "srsran/phy/utils/debug.h"
 #include "srsran/phy/utils/vector.h"
 
-#define PBCH_RE_CP_NORM 240
-#define PBCH_RE_CP_EXT 216
+#define PBCH_RE_CP_NORM 240 // Number of RE for the complete PBCH when using normal length CP
+#define PBCH_RE_CP_EXT 216 // 24 RE less because te fourth symbol gets 4 CRS RE per PRB
+#define PBCH_RE_CP_NORM_REP 312 // 48 + 48 + 72 + 72 + 72. // Table 6.6.4.1-1 TS 36.211
+#define PBCH_RE_CP_EXT_REP 168 // 48 + 72 + 48
 
 const uint8_t srsran_crc_mask[4][16] = {{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
                                         {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1},
@@ -49,31 +51,58 @@ bool srsran_pbch_exists(int nframe, int nslot)
   return (!(nframe % 5) && nslot == 1);
 }
 
-int srsran_pbch_cp(cf_t* input, cf_t* output, srsran_cell_t cell, bool put)
+int srsran_pbch_cp(cf_t* input, cf_t* output, srsran_cell_t cell, bool put, bool repeated)
 {
   int   i;
   cf_t* ptr;
 
   if (put) {
     ptr = input;
-    output += cell.nof_prb * SRSRAN_NRE / 2 - 36;
+    output += cell.nof_prb * SRSRAN_NRE / 2 - 36; // Move to the first PBCH RE within the firs OFDM symbol 
   } else {
     ptr = output;
     input += cell.nof_prb * SRSRAN_NRE / 2 - 36;
   }
 
-  /* symbol 0 & 1 */
-  for (i = 0; i < 2; i++) {
-    prb_cp_ref(&input, &output, cell.id % 3, 4, 4 * 6, put);
-    if (put) {
-      output += cell.nof_prb * SRSRAN_NRE - 2 * 36 + (cell.id % 3 == 2 ? 1 : 0);
-    } else {
-      input += cell.nof_prb * SRSRAN_NRE - 2 * 36 + (cell.id % 3 == 2 ? 1 : 0);
-    }
-  }
-  /* symbols 2 & 3 */
-  if (SRSRAN_CP_ISNORM(cell.cp)) {
+  if (!repeated) {
+    /* symbol 0 & 1 */
     for (i = 0; i < 2; i++) {
+      prb_cp_ref(&input, &output, cell.id % 3, 4, 4 * 6, put);
+      if (put) {
+        output += cell.nof_prb * SRSRAN_NRE - 2 * 36 + (cell.id % 3 == 2 ? 1 : 0);
+      } else {
+        input += cell.nof_prb * SRSRAN_NRE - 2 * 36 + (cell.id % 3 == 2 ? 1 : 0);
+      }
+    }
+    /* symbols 2 & 3 */
+    if (SRSRAN_CP_ISNORM(cell.cp)) {
+      for (i = 0; i < 2; i++) {
+        prb_cp(&input, &output, 6);
+        if (put) {
+          output += cell.nof_prb * SRSRAN_NRE - 2 * 36;
+        } else {
+          input += cell.nof_prb * SRSRAN_NRE - 2 * 36;
+        }
+      }
+    } else {
+      prb_cp(&input, &output, 6);
+      if (put) {
+        output += cell.nof_prb * SRSRAN_NRE - 2 * 36;
+      } else {
+        input += cell.nof_prb * SRSRAN_NRE - 2 * 36;
+      }
+      prb_cp_ref(&input, &output, cell.id % 3, 4, 4 * 6, put);
+    }
+  } else { // Release 16
+    // When calling this function to get the repeated symbols the passed input pointer points directly to slot0
+    if (put) {
+      output += cell.nof_prb * SRSRAN_NRE * 3; // First PBCH symbol is the fourth (3) in slot0
+    } else {
+      input += cell.nof_prb * SRSRAN_NRE * 3;
+    }
+
+    /* symbol 3 slot0 */
+    if (SRSRAN_CP_ISNORM(cell.cp)) { // This repetition is only present for normal CP
       prb_cp(&input, &output, 6);
       if (put) {
         output += cell.nof_prb * SRSRAN_NRE - 2 * 36;
@@ -81,15 +110,61 @@ int srsran_pbch_cp(cf_t* input, cf_t* output, srsran_cell_t cell, bool put)
         input += cell.nof_prb * SRSRAN_NRE - 2 * 36;
       }
     }
-  } else {
-    prb_cp(&input, &output, 6);
-    if (put) {
-      output += cell.nof_prb * SRSRAN_NRE - 2 * 36;
-    } else {
-      input += cell.nof_prb * SRSRAN_NRE - 2 * 36;
-    }
+
+    /* symbol 0 (normal CP) symbol 1 (ext CP) slot0 */
     prb_cp_ref(&input, &output, cell.id % 3, 4, 4 * 6, put);
+    if (put) {
+      output += cell.nof_prb * SRSRAN_NRE - 2 * 36 + (cell.id % 3 == 2 ? 1 : 0);
+    } else {
+      input += cell.nof_prb * SRSRAN_NRE - 2 * 36 + (cell.id % 3 == 2 ? 1 : 0);
+    }
+
+    /* Move to next group of repeated symbol in slot1 */
+    if (put) {
+      output += cell.nof_prb * SRSRAN_NRE * 6; // First PBCH symbol is the fifth (4) in slot0
+    } else {
+      input += cell.nof_prb * SRSRAN_NRE * 6;
+    }
+
+    /* symbol 4 NORM CP */
+    if (SRSRAN_CP_ISNORM(cell.cp)) {
+      prb_cp_ref(&input, &output, cell.id % 3, 4, 4 * 6, put);
+      if (put) {
+        output += cell.nof_prb * SRSRAN_NRE - 2 * 36 + (cell.id % 3 == 2 ? 1 : 0);
+      } else {
+        input += cell.nof_prb * SRSRAN_NRE - 2 * 36 + (cell.id % 3 == 2 ? 1 : 0);
+      }
+    }
+    
+    /* symbol 5 & 6 NORM CP, or symbol 4 & 5 EXT CP */
+    if (SRSRAN_CP_ISNORM(cell.cp)) {
+      for (i = 0; i < 2; i++) {
+        prb_cp(&input, &output, 6);
+        if (put) {
+          output += cell.nof_prb * SRSRAN_NRE - 2 * 36;
+        } else {
+          input += cell.nof_prb * SRSRAN_NRE - 2 * 36;
+        }
+      }
+    } else {
+      prb_cp(&input, &output, 6);
+      if (put) {
+        output += cell.nof_prb * SRSRAN_NRE - 2 * 36;
+      } else {
+        input += cell.nof_prb * SRSRAN_NRE - 2 * 36;
+      }
+
+      prb_cp_ref(&input, &output, cell.id % 3, 4, 4 * 6, put);
+      if (put) {
+        output += cell.nof_prb * SRSRAN_NRE - 2 * 36 + (cell.id % 3 == 2 ? 1 : 0);
+      } else {
+        input += cell.nof_prb * SRSRAN_NRE - 2 * 36 + (cell.id % 3 == 2 ? 1 : 0);
+      }
+    }
+
+
   }
+
   if (put) {
     return input - ptr;
   } else {
@@ -110,7 +185,7 @@ int srsran_pbch_cp(cf_t* input, cf_t* output, srsran_cell_t cell, bool put)
  */
 int srsran_pbch_put(cf_t* pbch, cf_t* slot1_data, srsran_cell_t cell)
 {
-  return srsran_pbch_cp(pbch, slot1_data, cell, true);
+  return srsran_pbch_cp(pbch, slot1_data, cell, true, false);
 }
 
 /**
@@ -126,7 +201,39 @@ int srsran_pbch_put(cf_t* pbch, cf_t* slot1_data, srsran_cell_t cell)
  */
 int srsran_pbch_get(cf_t* slot1_data, cf_t* pbch, srsran_cell_t cell)
 {
-  return srsran_pbch_cp(slot1_data, pbch, cell, false);
+  return srsran_pbch_cp(slot1_data, pbch, cell, false, false);
+}
+
+/**
+ * Puts repeated PBCH symbols in slot number 0 and 1 
+ *
+ * Returns the number of symbols written to slot_data
+ *
+ * 36.211 16.3 section 6.6.4
+ *
+ * @param[in] pbch PBCH complex symbols to place in slot1_data
+ * @param[out] slot1_data Complex symbol buffer for slot1
+ * @param[in] cell Cell configuration
+ */
+int srsran_pbch_put_rep(cf_t* pbch, cf_t* slot_data, srsran_cell_t cell)
+{
+  return srsran_pbch_cp(pbch, slot_data, cell, true, true);
+}
+
+/**
+ * Extracts repeated PBCH symbols from slot number 0 and 1
+ *
+ * Returns the number of symbols written to pbch
+ *
+ * 36.211 16.3 section 6.6.4
+ *
+ * @param[in] slot1_data Complex symbols for slot1
+ * @param[out] pbch Extracted complex PBCH symbols
+ * @param[in] cell Cell configuration
+ */
+int srsran_pbch_get_rep(cf_t* slot_data, cf_t* pbch, srsran_cell_t cell)
+{
+  return srsran_pbch_cp(slot_data, pbch, cell, false, true);
 }
 
 /** Initializes the PBCH transmitter and receiver.
@@ -159,21 +266,21 @@ int srsran_pbch_init(srsran_pbch_t* q)
 
     q->nof_symbols = PBCH_RE_CP_NORM;
 
-    q->d = srsran_vec_cf_malloc(q->nof_symbols);
+    q->d = srsran_vec_cf_malloc(q->nof_symbols + PBCH_RE_CP_NORM_REP);
     if (!q->d) {
       goto clean;
     }
     int i;
     for (i = 0; i < SRSRAN_MAX_PORTS; i++) {
-      q->ce[i] = srsran_vec_cf_malloc(q->nof_symbols);
+      q->ce[i] = srsran_vec_cf_malloc(q->nof_symbols + PBCH_RE_CP_NORM_REP);
       if (!q->ce[i]) {
         goto clean;
       }
-      q->x[i] = srsran_vec_cf_malloc(q->nof_symbols);
+      q->x[i] = srsran_vec_cf_malloc(q->nof_symbols + PBCH_RE_CP_NORM_REP);
       if (!q->x[i]) {
         goto clean;
       }
-      q->symbols[i] = srsran_vec_cf_malloc(q->nof_symbols);
+      q->symbols[i] = srsran_vec_cf_malloc(q->nof_symbols + PBCH_RE_CP_NORM_REP);
       if (!q->symbols[i]) {
         goto clean;
       }
@@ -188,6 +295,10 @@ int srsran_pbch_init(srsran_pbch_t* q)
     }
     q->rm_b = srsran_vec_u8_malloc(q->nof_symbols * 4 * 2);
     if (!q->rm_b) {
+      goto clean;
+    }
+    q->theta = srsran_vec_cf_malloc(6 * SRSRAN_NRE * SRSRAN_MAX_NOF_REP_PBCH_SYMBOLS);
+    if (!q->theta) {
       goto clean;
     }
 
@@ -229,8 +340,56 @@ void srsran_pbch_free(srsran_pbch_t* q)
   if (q->d) {
     free(q->d);
   }
+  if (q->theta) {
+    free(q->theta);
+  }
   bzero(q, sizeof(srsran_pbch_t));
 }
+
+int srsran_rep_pbch_symbols_idx(uint32_t l, srsran_cp_t cp)
+{
+  int ret = 0;
+  switch (cp) {
+    case SRSRAN_CP_EXT:
+      ret = l + 3;
+      break;
+    case SRSRAN_CP_NORM:
+      if (l < 2) {
+        ret = l + 3;
+      } else {
+        ret = l + 2;
+      } 
+  }
+  return ret;
+}
+
+int srsran_set_phase_rep_pbch(cf_t* theta, srsran_cp_t cp, uint32_t cell_id, bool inv)
+{
+  int vo = cell_id % 3, i = 0; uint32_t nsp, lp;
+  srsran_sequence_t seq;
+  bzero(&seq, sizeof(srsran_sequence_t));
+
+  /* Initialitation of c sequence, as especified in TS 36.211 v16.3.0 section 6.6.4.1*/
+  for (uint32_t l = 0; l < SRSRAN_NOF_REP_PBCH_SYMBOLS(cp); l++){
+    nsp = (l > (SRSRAN_CP_ISNORM(cp) ? 1 : 0)) ? 1 : 0;
+
+    lp = srsran_rep_pbch_symbols_idx(l, cp);
+    if(srsran_sequence_LTE_pr(&seq, 2 * 6 * SRSRAN_NRE + 1, (1<<13) * ((cell_id + 1) * (SRSRAN_CP_NSYMB(cp) * nsp + lp + 1)) + (1<<4) * cell_id + (SRSRAN_CP_NSYMB(cp) * nsp + lp))){
+      return SRSRAN_ERROR;
+    }
+    for (uint32_t kp = 0; kp < 6 * SRSRAN_NRE; kp++){
+      if((l == ((SRSRAN_CP_ISNORM(cp)) ? 1 : 0)) || l == 2){
+        if(vo == (kp % 3)){ // We don't need to compute the CS-RS phases.
+          continue;
+        }
+      }
+      theta[i++] = cexp(pow(-1, inv)*(M_PI * I * seq.c[2*kp])/2)*cexp(pow(-1, inv)*M_PI * I * seq.c[2*kp + 1]);
+    }
+  }
+  srsran_sequence_free(&seq); // We don't need anymore this sequence.
+  return SRSRAN_SUCCESS;
+}
+
 
 int srsran_pbch_set_cell(srsran_pbch_t* q, srsran_cell_t cell)
 {
@@ -249,8 +408,12 @@ int srsran_pbch_set_cell(srsran_pbch_t* q, srsran_cell_t cell)
       if (srsran_sequence_pbch(&q->seq, q->cell.cp, q->cell.id, q->cell.mbms_dedicated)) {
         return SRSRAN_ERROR;
       }
+      if (srsran_set_phase_rep_pbch(q->theta, q->cell.cp, q->cell.id, true)) {
+        return SRSRAN_ERROR;
+      }
     }
     q->nof_symbols = (SRSRAN_CP_ISNORM(q->cell.cp)) ? PBCH_RE_CP_NORM : PBCH_RE_CP_EXT;
+    q->nof_rep_symbols = (SRSRAN_CP_ISNORM(q->cell.cp)) ? PBCH_RE_CP_NORM_REP : PBCH_RE_CP_EXT_REP;
 
     ret = SRSRAN_SUCCESS;
   }
@@ -313,9 +476,11 @@ void srsran_pbch_mib_unpack(uint8_t* msg, srsran_cell_t* cell, uint32_t* sfn)
  * @param[in] msg PBCH in an unpacked bit array of size 24
  * @param[out] sfn System frame number
  * @param[out] cell MIB information about PHICH and system bandwidth will be saved here
+ * @param[out] CFI CFI value from the MIB (Rel-16).
  */
 void srsran_pbch_mib_mbms_unpack(uint8_t* msg, srsran_cell_t* cell, uint32_t* sfn, uint32_t* additional_non_mbsfn_subframes, int8_t override_prb)
 {
+  uint32_t tmp; 
   uint32_t bw_idx = srsran_bit_pack(&msg, 3);
   switch (bw_idx) {
     case 0:
@@ -336,9 +501,11 @@ void srsran_pbch_mib_mbms_unpack(uint8_t* msg, srsran_cell_t* cell, uint32_t* sf
     *sfn = srsran_bit_pack(&msg, 6) << 4;
   }
 
+  tmp = srsran_bit_pack(&msg, 2);
   if (additional_non_mbsfn_subframes) {
-    *additional_non_mbsfn_subframes = *msg++;
-  }
+    *additional_non_mbsfn_subframes = tmp; 
+  } 
+  cell->cfi = srsran_bit_pack(&msg, 2);
 }
 
 /**
@@ -463,6 +630,40 @@ int decode_frame(srsran_pbch_t* q, uint32_t src, uint32_t dst, uint32_t n, uint3
   }
 }
 
+int srsran_rel16_pbch_mrc(srsran_pbch_t*         q,
+                          cf_t* y, 
+                          cf_t* h, 
+                          cf_t* x, 
+                          cf_t* theta, 
+                          int nof_symbols, 
+                          int nof_rep_symbols, 
+                          float noise_estimate)
+{
+  int threshold_corr = 40, ret = 0; // TODO choose a proper threshold
+  int offset = (nof_rep_symbols == PBCH_RE_CP_NORM_REP ? 0 : 48); // For extended CP, the first PBCH OFDM symbol isn't repeated
+  int offset_rep = (nof_rep_symbols == PBCH_RE_CP_NORM_REP ? 72 : 0); // For normal CP, the first repeated symbol is the 10th, and then the 7, 8, 9 and 10, ignore the first 10th repetition
+  float abs = 0; 
+
+  srsran_vec_prod_ccc(&y[nof_symbols + offset_rep], theta, &y[nof_symbols + offset_rep], nof_rep_symbols); //Phase correction for the repeated symbols
+  cf_t corr = srsran_vec_dot_prod_conj_ccc(&y[offset], &y[nof_symbols + offset_rep], nof_rep_symbols); //Correlation between PBCH and (possibly) repeated PBCH
+  srsran_vec_abs_cf(&corr, &abs, 1);
+
+  if(abs>threshold_corr){ // Check if it's a rel-16 PBCH
+    q->cell.is_mbms_r16 = true;
+    cf_t r1 = 0, r2 = 0, hh = 0; // Maximum ratio combining (2x1)
+    ret = 1;
+    for (int i = offset; i < nof_symbols; i++) {
+      r1 += x[i] * conjf(h[i]);
+      r2 += x[nof_symbols + offset_rep + i] * conjf(h[nof_symbols + offset_rep + i]);
+      hh += (conjf(h[i]) * h[i]) + (conjf(h[nof_symbols + offset_rep + i]) * h[nof_symbols + offset_rep + i]);
+      x[offset] = (r1 + r2) / ((hh + noise_estimate));
+    }
+
+    INFO("Combined PBCH repetitions with correlation=%f\n", abs);
+  }
+  return ret;
+}
+
 /* Decodes the PBCH channel
  *
  * The PBCH spans in 40 ms. This function is called every 10 ms. It tries to decode the MIB
@@ -488,10 +689,13 @@ int srsran_pbch_decode(srsran_pbch_t*         q,
 
   if (q != NULL && sf_symbols != NULL) {
     cf_t* slot1_symbols = &sf_symbols[0][SRSRAN_SLOT_LEN_RE(q->cell.nof_prb, q->cell.cp)];
+    cf_t* slot0_symbols = &sf_symbols[0][0];
 
+    cf_t* ce_slot0[SRSRAN_MAX_PORTS];
     cf_t* ce_slot1[SRSRAN_MAX_PORTS];
     for (int i = 0; i < SRSRAN_MAX_PORTS; i++) {
       ce_slot1[i] = &channel->ce[i][0][SRSRAN_SLOT_LEN_RE(q->cell.nof_prb, q->cell.cp)];
+      ce_slot0[i] = &channel->ce[i][0][0];
     }
 
     /* Set pointers for layermapping & precoding */
@@ -507,6 +711,10 @@ int srsran_pbch_decode(srsran_pbch_t*         q,
       ERROR("There was an error getting the PBCH symbols");
       return SRSRAN_ERROR;
     }
+    if (q->nof_rep_symbols != srsran_pbch_get_rep(slot0_symbols, &q->symbols[0][q->nof_symbols], q->cell)) {
+      ERROR("There was an error getting the repeated PBCH symbols\n");
+      return SRSRAN_ERROR;
+    }
 
     /* extract channel estimates */
     for (i = 0; i < q->cell.nof_ports; i++) {
@@ -514,6 +722,41 @@ int srsran_pbch_decode(srsran_pbch_t*         q,
         ERROR("There was an error getting the PBCH symbols");
         return SRSRAN_ERROR;
       }
+    }
+    for (i = 0; i < q->cell.nof_ports; i++) {
+      if (q->nof_rep_symbols != srsran_pbch_get_rep(ce_slot0[i], &q->ce[i][q->nof_symbols], q->cell)) {
+        ERROR("There was an error getting the repeated PBCH symbols\n");
+        return SRSRAN_ERROR;
+      }
+    }
+    
+    if (SRSRAN_VERBOSE_ISDEBUG()) {
+      char filename[FILENAME_MAX];
+      DEBUG("SAVED FILE subframe_CAS.dat: received subframe symbols\n");
+      srsran_vec_save_file("subframe_CAS.dat", sf_symbols[0], SRSRAN_NOF_RE(q->cell) * sizeof(cf_t));
+      //DEBUG("SAVED FILE hestCAS.dat: channel estimates for port 4\n");
+      DEBUG("nof_prb=%d, cp=%d, nof_re=%d, grant_re=%d\n",
+             q->cell.nof_prb,
+             q->cell.cp,
+             SRSRAN_NOF_RE(q->cell),
+             q->nof_symbols);
+      for (int i = 0; i < q->cell.nof_ports; i++) {
+        if (snprintf(filename, FILENAME_MAX, "hest_%d_pbch.dat", i) < 0) {
+          ERROR("Generating file name");
+          break;
+        }
+        DEBUG("SAVED FILE %s: channel estimates for Rx %d\n", filename, i);
+        srsran_vec_save_file(filename, q->ce[i], (q->nof_symbols + q->nof_rep_symbols) * sizeof(cf_t));
+
+        if (snprintf(filename, FILENAME_MAX, "hest_%d_.dat", i) < 0) {
+          ERROR("Generating file name");
+          break;
+        }
+        DEBUG("SAVED FILE %s: channel estimates for Rx %d\n", filename, i);
+        srsran_vec_save_file(filename, channel->ce[i][0], SRSRAN_NOF_RE(q->cell) * sizeof(cf_t));
+      }
+      DEBUG("SAVED FILE pbch_symbols.dat: symbols before equalization (slot1)\n");
+      srsran_vec_save_file("pbch_symbols.bin", q->symbols[0], (q->nof_symbols + q->nof_rep_symbols) * sizeof(cf_t));
     }
 
     q->frame_idx++;
@@ -535,7 +778,12 @@ int srsran_pbch_decode(srsran_pbch_t*         q,
         /* in control channels, only diversity is supported */
         if (nant == 1) {
           /* no need for layer demapping */
-          srsran_predecoding_single(q->symbols[0], q->ce[0], q->d, NULL, q->nof_symbols, 1.0f, channel->noise_estimate);
+          srsran_predecoding_single(q->symbols[0], q->ce[0], q->d, NULL,  q->nof_symbols + q->nof_rep_symbols, 1.0f, channel->noise_estimate);
+          srsran_rel16_pbch_mrc(q, q->d, q->ce[0], q->symbols[0], q->theta, q->nof_symbols, q->nof_rep_symbols, channel->noise_estimate);
+          if (SRSRAN_VERBOSE_ISDEBUG()) {
+            DEBUG("SAVED FILE pbch_symbols.dat: symbols after equalization and dephase (slot1)\n");
+            srsran_vec_save_file("pbch_symbols_eq_dp.bin", q->d, (q->nof_symbols + q->nof_rep_symbols) * sizeof(cf_t));
+          }
         } else {
           srsran_predecoding_diversity(q->symbols[0], q->ce, x, nant, q->nof_symbols, 1.0f);
           srsran_layerdemap_diversity(x, q->d, nant, q->nof_symbols / nant);

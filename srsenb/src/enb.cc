@@ -1,5 +1,5 @@
 /**
- * Copyright 2013-2021 Software Radio Systems Limited
+ * Copyright 2013-2023 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,9 +21,9 @@
 
 #include "srsenb/hdr/enb.h"
 #include "srsenb/hdr/stack/enb_stack_lte.h"
-#include "srsenb/hdr/stack/gnb_stack_nr.h"
 #include "srsenb/hdr/x2_adapter.h"
 #include "srsenb/src/enb_cfg_parser.h"
+#include "srsgnb/hdr/stack/gnb_stack_nr.h"
 #include "srsran/build_info.h"
 #include "srsran/common/enb_events.h"
 #include "srsran/radio/radio_null.h"
@@ -134,9 +134,8 @@ int enb::init(const all_args_t& args_)
   if (tmp_nr_stack) {
     nr_stack = std::move(tmp_nr_stack);
   }
-  phy   = std::move(tmp_phy);
-  radio = std::move(tmp_radio);
-
+  phy     = std::move(tmp_phy);
+  radio   = std::move(tmp_radio);
   started = true; // set to true in any case to allow stopping the eNB if an error happened
 
   // Now that everything is setup, log sector start events.
@@ -161,6 +160,10 @@ void enb::stop()
 {
   if (started) {
     // tear down in reverse order
+    if (_e2_agent) {
+      _e2_agent->stop();
+    }
+
     if (phy) {
       phy->stop();
     }
@@ -200,6 +203,22 @@ void enb::start_plot()
   phy->start_plot();
 }
 
+bool enb::enable_e2_agent(srsenb::e2_interface_metrics* e2_metrics)
+{
+  std::unique_ptr<srsenb::e2_agent> tmp_e2_agent = std::unique_ptr<srsenb::e2_agent>(
+      new srsenb::e2_agent(srslog::fetch_basic_logger("E2_AGENT", log_sink, false), e2_metrics));
+  if (tmp_e2_agent == nullptr) {
+    srsran::console("Error creating e2_agent instance.\n");
+    return SRSRAN_ERROR;
+  }
+  if (tmp_e2_agent->init(args.e2_agent)) {
+    srsran::console("Error initializing e2_agent client.\n");
+    return SRSRAN_ERROR;
+  }
+  _e2_agent = std::move(tmp_e2_agent);
+  return SRSRAN_SUCCESS;
+}
+
 void enb::print_pool()
 {
   srsran::byte_buffer_pool::get_instance()->print_all_buffers();
@@ -226,6 +245,11 @@ bool enb::get_metrics(enb_metrics_t* m)
 void enb::cmd_cell_gain(uint32_t cell_id, float gain)
 {
   phy->cmd_cell_gain(cell_id, gain);
+}
+
+void enb::cmd_cell_measure()
+{
+  phy->cmd_cell_measure();
 }
 
 std::string enb::get_build_mode()
@@ -263,6 +287,11 @@ void enb::tti_clock()
   if (!started) {
     return;
   }
+
+  if (_e2_agent) {
+    _e2_agent->tic();
+  }
+
   if (eutra_stack) {
     eutra_stack->tti_clock();
   }

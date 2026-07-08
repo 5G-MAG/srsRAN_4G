@@ -1,5 +1,5 @@
 /**
- * Copyright 2013-2021 Software Radio Systems Limited
+ * Copyright 2013-2023 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -31,7 +31,7 @@
 #include "srsran/phy/utils/debug.h"
 #include "srsran/phy/utils/vector.h"
 
-#define MIB_BUFFER_MAX_SAMPLES_FOR_PRB(prb)   (8 * SRSRAN_SF_LEN_PRB(prb))
+#define MIB_BUFFER_MAX_SAMPLES_FOR_PRB(prb)   (43 * SRSRAN_SF_LEN_PRB(prb))
 #define MIB_BUFFER_MAX_SAMPLES                MIB_BUFFER_MAX_SAMPLES_FOR_PRB(SRSRAN_UE_MIB_NOF_PRB)
 
 int srsran_ue_mib_init(srsran_ue_mib_t* q, cf_t* in_buffer, uint32_t max_prb)
@@ -293,6 +293,7 @@ int srsran_ue_mib_sync_decode_prb(srsran_ue_mib_sync_t* q,
     if (srsran_ue_sync_get_sfn(&q->ue_sync)%4 == 0 && srsran_ue_sync_get_sfidx(&q->ue_sync) == 0) {
    // if (srsran_ue_sync_get_sfidx(&q->ue_sync) == 0 ) { // [TODO] fix for mixed-mode
       if (ret == 1) {
+        srsran_ue_mib_reset(&q->ue_mib);
         mib_ret = srsran_ue_mib_decode(&q->ue_mib, bch_payload, nof_tx_ports, sfn_offset);
       } else {
         DEBUG("Resetting PBCH decoder after %d frames", q->ue_mib.frame_cnt);

@@ -1,5 +1,5 @@
 /**
- * Copyright 2013-2021 Software Radio Systems Limited
+ * Copyright 2013-2023 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -56,18 +56,18 @@
 #include "srsran/phy/sync/cfo.h"
 #include "srsran/phy/sync/sync.h"
 
-#define DEFAULT_SAMPLE_OFFSET_CORRECT_PERIOD  10
-#define DEFAULT_SFO_EMA_COEFF                 0.1
+#define DEFAULT_SAMPLE_OFFSET_CORRECT_PERIOD  1
+#define DEFAULT_SFO_EMA_COEFF                 0.9
 
-#define DEFAULT_CFO_BW_PSS  0.05
-#define DEFAULT_CFO_PSS_MIN 400  // typical bias of PSS estimation.
-#define DEFAULT_CFO_BW_REF  0.08
+#define DEFAULT_CFO_BW_PSS  1
+#define DEFAULT_CFO_PSS_MIN 750  // typical bias of PSS estimation.
+#define DEFAULT_CFO_BW_REF  1
 #define DEFAULT_CFO_REF_MIN 0    // typical bias of REF estimation
 #define DEFAULT_CFO_REF_MAX DEFAULT_CFO_PSS_MIN  // Maximum detection offset of REF based estimation
 
-#define DEFAULT_PSS_STABLE_TIMEOUT     20  // Time after which the PSS is considered to be stable and we accept REF-CFO
+#define DEFAULT_PSS_STABLE_TIMEOUT     160  // Time after which the PSS is considered to be stable and we accept REF-CFO
 
-#define DEFAULT_CFO_EMA_TRACK 0.05
+#define DEFAULT_CFO_EMA_TRACK 0.9
 
 typedef enum SRSRAN_API { SYNC_MODE_PSS, SYNC_MODE_GNSS } srsran_ue_sync_mode_t;
 typedef enum SRSRAN_API { SF_FIND, SF_TRACK } srsran_ue_sync_state_t;

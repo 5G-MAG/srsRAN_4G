@@ -1,5 +1,5 @@
 /**
- * Copyright 2013-2021 Software Radio Systems Limited
+ * Copyright 2013-2023 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -58,7 +58,7 @@ int srsran_cp_synch_resize(srsran_cp_synch_t* q, uint32_t symbol_sz)
 }
 
 uint32_t
-srsran_cp_synch(srsran_cp_synch_t* q, const cf_t* input, uint32_t max_offset, uint32_t nof_symbols, uint32_t cp_len)
+srsran_cp_synch(srsran_cp_synch_t* q, const cf_t* input, uint32_t max_offset, uint32_t nof_symbols, srsran_cp_t cp)
 {
   if (max_offset > q->symbol_sz) {
     max_offset = q->symbol_sz;
@@ -67,7 +67,8 @@ srsran_cp_synch(srsran_cp_synch_t* q, const cf_t* input, uint32_t max_offset, ui
     q->corr[i]           = 0;
     const cf_t* inputPtr = input;
     for (int n = 0; n < nof_symbols; n++) {
-      uint32_t cplen = (n % 7) ? cp_len : cp_len + 1;
+      //uint32_t cplen = (n % 7) ? cp_len : cp_len + 1;
+      uint32_t cplen = SRSRAN_CP_ISNORM(cp) ? SRSRAN_CP_LEN_NORM(i, q->symbol_sz) : SRSRAN_CP_LEN_EXT(q->symbol_sz);
       q->corr[i] += srsran_vec_dot_prod_conj_ccc(&inputPtr[i], &inputPtr[i + q->symbol_sz], cplen) / nof_symbols;
       inputPtr += q->symbol_sz + cplen;
     }

@@ -1,5 +1,5 @@
 /**
- * Copyright 2013-2021 Software Radio Systems Limited
+ * Copyright 2013-2023 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -65,6 +65,14 @@ void phy_common::init(phy_args_t*                  _args,
     ul_channel = srsran::channel_ptr(
         new srsran::channel(args->ul_channel_args, args->nof_lte_carriers * args->nof_rx_ant, logger));
   }
+
+  // Init the CFR config struct with the CFR args
+  cfr_config.cfr_enable  = args->cfr_args.enable;
+  cfr_config.cfr_mode    = args->cfr_args.mode;
+  cfr_config.alpha       = args->cfr_args.strength;
+  cfr_config.manual_thr  = args->cfr_args.manual_thres;
+  cfr_config.max_papr_db = args->cfr_args.auto_target_papr;
+  cfr_config.ema_alpha   = args->cfr_args.ema_alpha;
 }
 
 void phy_common::set_ue_dl_cfg(srsran_ue_dl_cfg_t* ue_dl_cfg)
@@ -647,6 +655,7 @@ void phy_common::reset_measurements(uint32_t cc_idx)
     for (uint32_t cc = 0; cc < SRSRAN_MAX_CARRIERS; cc++) {
       reset_measurements(cc);
     }
+    return;
   }
 
   // Default all metrics to NAN to prevent providing invalid information on traces and other layers
@@ -682,9 +691,9 @@ void phy_common::update_measurements(uint32_t                     cc_idx,
       return;
     }
 
-    // Only worker 0 reads the RSSI sensor
+    // Only worker 0 updates RX gain offset every 10 ms
     if (rssi_power_buffer) {
-      if (!rssi_read_cnt) {
+      if (!update_rxgain_cnt) {
         // Average RSSI over all symbols in antenna port 0 (make sure SF length is non-zero)
         float rssi_dbm = SRSRAN_SF_LEN_PRB(cell.nof_prb) > 0
                              ? (srsran_convert_power_to_dB(
@@ -697,9 +706,9 @@ void phy_common::update_measurements(uint32_t                     cc_idx,
 
         rx_gain_offset = get_radio()->get_rx_gain() + args->rx_gain_offset;
       }
-      rssi_read_cnt++;
-      if (rssi_read_cnt >= 1000) {
-        rssi_read_cnt = 0;
+      update_rxgain_cnt++;
+      if (update_rxgain_cnt >= update_rxgain_period) {
+        update_rxgain_cnt = 0;
       }
     }
 
@@ -945,6 +954,7 @@ void phy_common::reset()
 void phy_common::build_mch_table()
 {
   // First reset tables
+  std::lock_guard<std::mutex> lock(mch_mutex);
   bzero(&mch_table[0], sizeof(uint8_t) * 40);
 
   // 40 element table represents 4 frames (40 subframes)
@@ -967,6 +977,7 @@ void phy_common::build_mch_table()
 
 void phy_common::build_mcch_table()
 {
+  std::lock_guard<std::mutex> lock(mch_mutex);
   // First reset tables
   bzero(&mcch_table[0], sizeof(uint8_t) * 10);
   generate_mcch_table(&mcch_table[0], (uint32_t)mbsfn_config.mbsfn_area_info.mcch_cfg.sf_alloc_info);
@@ -1024,7 +1035,7 @@ bool phy_common::is_mch_subframe(srsran_mbsfn_cfg_t* cfg, uint32_t phy_tti)
   cfg->mbsfn_mcs               = 2;
   cfg->enable                  = false;
   cfg->is_mcch                 = false;
-
+  std::lock_guard<std::mutex> lock(mch_mutex);
   // Check for MCCH
   if (is_mcch_subframe(cfg, phy_tti)) {
     cfg->is_mcch = true;

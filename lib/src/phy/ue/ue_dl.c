@@ -1,5 +1,5 @@
 /**
- * Copyright 2013-2021 Software Radio Systems Limited
+ * Copyright 2013-2023 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -99,18 +99,17 @@ int srsran_ue_dl_init(srsran_ue_dl_t* q, cf_t* in_buffer[SRSRAN_MAX_PORTS], uint
         ERROR("Error initiating FFT");
         goto clean_exit;
       }
+    
+      ofdm_cfg.in_buffer  = in_buffer[i];
+      ofdm_cfg.out_buffer = q->sf_symbols[i];
+      ofdm_cfg.sf_type    = SRSRAN_SF_MBSFN;
+      ofdm_cfg.symbol_sz  = srsran_symbol_sz_scs(max_prb, SRSRAN_SCS_1KHZ25); // init for largest possible size
+      if (srsran_ofdm_rx_init_cfg(&q->fft_mbsfn[i], &ofdm_cfg)) {
+        ERROR("Error initiating FFT for MBSFN subframes ");
+        goto clean_exit;
+      }
+      srsran_ofdm_set_non_mbsfn_region(&q->fft_mbsfn[i], 2); // Set a default to init
     }
-
-    ofdm_cfg.in_buffer  = in_buffer[0];
-    ofdm_cfg.out_buffer = q->sf_symbols[0];
-    ofdm_cfg.sf_type    = SRSRAN_SF_MBSFN;
-    ofdm_cfg.symbol_sz  = srsran_symbol_sz_scs(max_prb, SRSRAN_SCS_1KHZ25); // init for largest possible size
-    if (srsran_ofdm_rx_init_cfg(&q->fft_mbsfn, &ofdm_cfg)) {
-      ERROR("Error initiating FFT for MBSFN subframes ");
-      goto clean_exit;
-    }
-    srsran_ofdm_set_non_mbsfn_region(&q->fft_mbsfn, 2); // Set a default to init
-
     if (srsran_chest_dl_init(&q->chest, max_prb, nof_rx_antennas)) {
       ERROR("Error initiating channel estimator");
       goto clean_exit;
@@ -160,8 +159,8 @@ void srsran_ue_dl_free(srsran_ue_dl_t* q)
   if (q) {
     for (int port = 0; port < SRSRAN_MAX_PORTS; port++) {
       srsran_ofdm_rx_free(&q->fft[port]);
+      srsran_ofdm_rx_free(&q->fft_mbsfn[port]);
     }
-    srsran_ofdm_rx_free(&q->fft_mbsfn);
     srsran_chest_dl_free(&q->chest);
     srsran_chest_dl_res_free(&q->chest_res);
     for (int i = 0; i < SRSRAN_MI_NOF_REGS; i++) {
@@ -215,6 +214,11 @@ int srsran_ue_dl_set_cell(srsran_ue_dl_t* q, srsran_cell_t cell)
             return SRSRAN_ERROR;
           }
         }
+        
+        if (srsran_ofdm_rx_set_prb(&q->fft_mbsfn[port], SRSRAN_CP_EXT, q->cell.mbsfn_prb)) {
+          ERROR("Error resizing MBSFN FFT");
+          return SRSRAN_ERROR;
+        }
       }
 
       // In TDD, initialize PDCCH and PHICH for the worst case: max ncces and phich groupds respectively
@@ -225,10 +229,7 @@ int srsran_ue_dl_set_cell(srsran_ue_dl_t* q, srsran_cell_t cell)
         phich_init_reg = 2; // mi=2
       }
 
-      if (srsran_ofdm_rx_set_prb(&q->fft_mbsfn, SRSRAN_CP_EXT, q->cell.mbsfn_prb)) {
-        ERROR("Error resizing MBSFN FFT");
-        return SRSRAN_ERROR;
-      }
+      
 
       if (srsran_chest_dl_set_cell(&q->chest, q->cell)) {
         ERROR("Error resizing channel estimator");
@@ -269,7 +270,9 @@ int srsran_ue_dl_set_cell(srsran_ue_dl_t* q, srsran_cell_t cell)
 
 void srsran_ue_dl_set_non_mbsfn_region(srsran_ue_dl_t* q, uint8_t non_mbsfn_region_length)
 {
-  srsran_ofdm_set_non_mbsfn_region(&q->fft_mbsfn, non_mbsfn_region_length);
+  for (int j = 0; j < q->nof_rx_antennas; j++) {
+    srsran_ofdm_set_non_mbsfn_region(&q->fft_mbsfn[j], non_mbsfn_region_length);
+  } 
 }
 
 void srsran_ue_dl_set_mi_auto(srsran_ue_dl_t* q)
@@ -310,9 +313,11 @@ int srsran_ue_dl_set_mbsfn_subcarrier_spacing(srsran_ue_dl_t* q, srsran_scs_t su
   int ret = SRSRAN_ERROR_INVALID_INPUTS;
   if (q != NULL) {
     ret = SRSRAN_ERROR;
-    if (srsran_ofdm_rx_set_prb_scs(&q->fft_mbsfn, SRSRAN_CP_EXT, q->cell.mbsfn_prb, subcarrier_spacing)) {
-      ERROR("Error setting MBSFN subcarrier spacing\n");
-      return ret;
+    for (int j = 0; j < q->nof_rx_antennas; j++) {
+      if (srsran_ofdm_rx_set_prb_scs(&q->fft_mbsfn[j], SRSRAN_CP_EXT, q->cell.mbsfn_prb, subcarrier_spacing)) {
+        ERROR("Error setting MBSFN subcarrier spacing\n");
+        return ret;
+      }
     }
     q->subcarrier_spacing = subcarrier_spacing;
     ret                      = SRSRAN_SUCCESS;
@@ -352,9 +357,14 @@ static int estimate_pdcch_pcfich(srsran_ue_dl_t* q, srsran_dl_sf_cfg_t* sf, srsr
     srsran_chest_dl_estimate_cfg(&q->chest, sf, &cfg->chest_cfg, q->sf_symbols, &q->chest_res);
 
     /* First decode PCFICH and obtain CFI */
-    if (srsran_pcfich_decode(&q->pcfich, sf, &q->chest_res, q->sf_symbols, &cfi_corr) < 0) {
-      ERROR("Error decoding PCFICH");
-      return SRSRAN_ERROR;
+    if (sf->cfi == 0){ // If the CFI wasn't obtained from the MIB, decode de PFICH
+      if (srsran_pcfich_decode(&q->pcfich, sf, &q->chest_res, q->sf_symbols, &cfi_corr) < 0) {
+        ERROR("Error decoding PCFICH\n");
+        return SRSRAN_ERROR;
+      }
+      INFO("Decoded CFI=%d with correlation %.2f, sf_idx=%d", sf->cfi, cfi_corr, sf->tti % 10);
+    } else {
+      INFO("Decoded CFI=%d from MIB, sf_idx=%d", sf->cfi, sf->tti % 10);
     }
 
     if (q->cell.frame_type == SRSRAN_TDD && ((sf->tti % 10) == 1 || (sf->tti % 10) == 6) && sf->cfi == 3) {
@@ -367,7 +377,6 @@ static int estimate_pdcch_pcfich(srsran_ue_dl_t* q, srsran_dl_sf_cfg_t* sf, srsr
       return false;
     }
 
-    INFO("Decoded CFI=%d with correlation %.2f, sf_idx=%d", sf->cfi, cfi_corr, sf->tti % 10);
 
     return SRSRAN_SUCCESS;
   } else {
@@ -381,7 +390,7 @@ int srsran_ue_dl_decode_fft_estimate(srsran_ue_dl_t* q, srsran_dl_sf_cfg_t* sf, 
     /* Run FFT for all subframe data */
     for (int j = 0; j < q->nof_rx_antennas; j++) {
       if (sf->sf_type == SRSRAN_SF_MBSFN) {
-        srsran_ofdm_rx_sf(&q->fft_mbsfn);
+        srsran_ofdm_rx_sf(&q->fft_mbsfn[j]);
       } else {
         srsran_ofdm_rx_sf(&q->fft[j]);
       }
@@ -405,7 +414,7 @@ int srsran_ue_dl_decode_fft_estimate_noguru(srsran_ue_dl_t*     q,
     /* Run FFT for all subframe data */
     for (int j = 0; j < q->nof_rx_antennas; j++) {
       if (sf->sf_type == SRSRAN_SF_MBSFN) {
-        srsran_ofdm_rx_sf_ng(&q->fft_mbsfn, input[j], q->sf_symbols[j]);
+        srsran_ofdm_rx_sf_ng(&q->fft_mbsfn[j], input[j], q->sf_symbols[j]);
       } else {
         srsran_ofdm_rx_sf_ng(&q->fft[j], input[j], q->sf_symbols[j]);
       }
@@ -456,7 +465,7 @@ static int dci_blind_search(srsran_ue_dl_t*     q,
 {
   uint32_t nof_dci = 0;
   if (rnti) {
-    for (int l = 0; l < search_space->nof_locations; l++) {
+    for (int l = search_space->nof_locations - 1; l >= 0; l--) {
       if (nof_dci >= SRSRAN_MAX_DCI_MSG) {
         ERROR("Can't store more DCIs in buffer");
         return nof_dci;

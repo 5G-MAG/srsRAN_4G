@@ -1,5 +1,5 @@
 /**
- * Copyright 2013-2021 Software Radio Systems Limited
+ * Copyright 2013-2023 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -22,6 +22,20 @@
 #include "srsue/hdr/stack/rrc/rrc_cell.h"
 
 namespace srsue {
+
+/// \brief Helper function to get the SIB number from the SIB type.
+unsigned get_sib_number(const asn1::rrc::sib_type_e& sib)
+{
+  unsigned sib_number = 3 + (unsigned)sib.value;
+  if (sib_number > 21) {
+    // skip sib22 and sib23
+    sib_number += 2;
+    if (sib_number > 26) {
+      sib_number--;
+    }
+  }
+  return sib_number;
+}
 
 meas_cell::meas_cell(srsran::unique_timer timer_) : timer(std::move(timer_))
 {
@@ -59,7 +73,7 @@ void meas_cell_eutra::set_sib1(const asn1::rrc::sib_type1_s& sib1_)
   sib_info_map.clear();
   for (uint32_t i = 0; i < sib1.sched_info_list.size(); ++i) {
     for (uint32_t j = 0; j < sib1.sched_info_list[i].sib_map_info.size(); ++j) {
-      sib_info_map.insert(std::make_pair(sib1.sched_info_list[i].sib_map_info[j].to_number() - 1, i));
+      sib_info_map.insert(std::make_pair(get_sib_number(sib1.sched_info_list[i].sib_map_info[j]) - 1, i));
     }
   }
 }
@@ -78,6 +92,12 @@ void meas_cell_eutra::set_sib13(const asn1::rrc::sib_type13_r9_s& sib13_)
 {
   sib13           = sib13_;
   has_valid_sib13 = true;
+}
+
+void meas_cell_nr::set_sib1(const asn1::rrc_nr::sib1_s& sib1_)
+{
+  sib1           = sib1_;
+  has_valid_sib1 = true;
 }
 
 bool meas_cell::is_sib_scheduled(uint32_t sib_index) const
@@ -178,6 +198,41 @@ uint16_t meas_cell_eutra::get_mnc() const
     }
   }
   return 0;
+}
+
+uint16_t meas_cell_nr::get_mcc() const
+{
+  uint16_t mcc = 0;
+  if (has_valid_sib1) {
+    if (sib1.cell_access_related_info.plmn_id_list.size() > 0) {
+      // PLMN ID list is nested twice
+      if (sib1.cell_access_related_info.plmn_id_list[0].plmn_id_list.size() > 0) {
+        if (sib1.cell_access_related_info.plmn_id_list[0].plmn_id_list[0].mcc_present) {
+          if (srsran::bytes_to_mcc(&sib1.cell_access_related_info.plmn_id_list[0].plmn_id_list[0].mcc[0], &mcc)) {
+            // successfully read MCC
+          }
+        }
+      }
+    }
+  }
+  return mcc;
+}
+
+uint16_t meas_cell_nr::get_mnc() const
+{
+  uint16_t mnc = 0;
+  if (has_valid_sib1) {
+    if (sib1.cell_access_related_info.plmn_id_list.size() > 0) {
+      if (sib1.cell_access_related_info.plmn_id_list[0].plmn_id_list.size() > 0) {
+        if (srsran::bytes_to_mnc(&sib1.cell_access_related_info.plmn_id_list[0].plmn_id_list[0].mnc[0],
+                                 &mnc,
+                                 sib1.cell_access_related_info.plmn_id_list[0].plmn_id_list[0].mnc.size())) {
+          // successfully read MNC
+        }
+      }
+    }
+  }
+  return mnc;
 }
 
 /*********************************************
@@ -400,6 +455,25 @@ int meas_cell_list<T>::set_serving_cell(phy_cell_t phy_cell, bool discard_servin
     }
   }
   return SRSRAN_SUCCESS;
+}
+
+template <class T>
+void meas_cell_list<T>::set_scell_cc_idx(uint32_t cc_idx, uint32_t earfcn, uint32_t pci)
+{
+  current_cell_pci_earfcn[cc_idx].first  = earfcn;
+  current_cell_pci_earfcn[cc_idx].second = pci;
+}
+
+template <class T>
+bool meas_cell_list<T>::get_scell_cc_idx(uint32_t earfcn, uint32_t& pci)
+{
+  for (auto& cell : current_cell_pci_earfcn) {
+    if (cell.first == earfcn) {
+      pci = cell.second;
+      return true;
+    }
+  }
+  return false;
 }
 
 template <class T>

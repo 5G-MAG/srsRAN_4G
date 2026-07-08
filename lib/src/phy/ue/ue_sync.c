@@ -1,5 +1,5 @@
 /**
- * Copyright 2013-2021 Software Radio Systems Limited
+ * Copyright 2013-2023 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -33,10 +33,10 @@
 #include "srsran/phy/utils/debug.h"
 #include "srsran/phy/utils/vector.h"
 
-#define MAX_TIME_OFFSET 128
+#define MAX_TIME_OFFSET 128 //3840
 
-#define TRACK_MAX_LOST 10
-#define TRACK_FRAME_SIZE 32
+#define TRACK_MAX_LOST 3
+#define TRACK_FRAME_SIZE 32 //3840
 #define FIND_NOF_AVG_FRAMES 4
 
 #define PSS_OFFSET                                                                                                     \
@@ -243,7 +243,7 @@ int srsran_ue_sync_init_multi_decim_mode(
 
     if (search_cell) {
       /* If the cell is unkown, we search PSS/SSS in 5 ms */
-      q->nof_recv_sf = 5;
+      q->nof_recv_sf = 10;
 
     } else {
       /* If the cell is known, we work on a 1ms basis */
@@ -269,7 +269,7 @@ int srsran_ue_sync_init_multi_decim_mode(
       } else {
         if (srsran_sync_init(&q->strack,
                              q->frame_len,
-                             SRSRAN_MAX(TRACK_FRAME_SIZE, SRSRAN_CP_LEN_NORM(1, q->fft_size)),
+                             SRSRAN_MAX(TRACK_FRAME_SIZE, SRSRAN_CP_LEN_EXT(q->fft_size)),
                              q->fft_size)) {
           ERROR("Error initiating sync track");
           goto clean_exit;
@@ -279,13 +279,13 @@ int srsran_ue_sync_init_multi_decim_mode(
       // Configure FIND and TRACK sync objects behaviour (this configuration is always the same)
       srsran_sync_set_cfo_i_enable(&q->sfind, false);
       srsran_sync_set_cfo_pss_enable(&q->sfind, true);
-      srsran_sync_set_pss_filt_enable(&q->sfind, true);
+      srsran_sync_set_pss_filt_enable(&q->sfind, false);
       srsran_sync_set_sss_eq_enable(&q->sfind, false);
 
       // During track, we do CFO correction outside the sync object
       srsran_sync_set_cfo_i_enable(&q->strack, false);
       srsran_sync_set_cfo_pss_enable(&q->strack, true);
-      srsran_sync_set_pss_filt_enable(&q->strack, true);
+      srsran_sync_set_pss_filt_enable(&q->strack, false);
       srsran_sync_set_sss_eq_enable(&q->strack, false);
 
       // TODO: CP detection not working very well. Not supporting Extended CP right now
@@ -343,11 +343,10 @@ int srsran_ue_sync_set_cell(srsran_ue_sync_t* q, srsran_cell_t cell)
       q->fft_size = srsran_symbol_sz(q->cell.nof_prb);
     }
     q->sf_len   = SRSRAN_SF_LEN(q->fft_size);
-    srsran_sync_set_cp(&q->sfind, q->cell.cp);
-    srsran_sync_set_cp(&q->strack, q->cell.cp);
+
     if (cell.id == 1000) {
       /* If the cell is unkown, we search PSS/SSS in 5 ms */
-      q->nof_recv_sf = 5;
+      q->nof_recv_sf = 10;
     } else {
       /* If the cell is known, we work on a 1ms basis */
       q->nof_recv_sf = 1;
@@ -378,12 +377,16 @@ int srsran_ue_sync_set_cell(srsran_ue_sync_t* q, srsran_cell_t cell)
       } else {
         if (srsran_sync_resize(&q->strack,
                                q->frame_len,
-                               SRSRAN_MAX(TRACK_FRAME_SIZE, SRSRAN_CP_LEN_NORM(1, q->fft_size)),
+                               SRSRAN_MAX(TRACK_FRAME_SIZE, SRSRAN_CP_LEN_EXT(q->fft_size)),
                                q->fft_size)) {
           ERROR("Error setting cell sync track");
           return SRSRAN_ERROR;
         }
       }
+
+      // Set CP for find and track objects
+      srsran_sync_set_cp(&q->sfind, cell.cp);
+      srsran_sync_set_cp(&q->strack, cell.cp);
 
       // When Cell ID is 1000, ue_sync receives nof_avg_find_frames frames in find state and does not go to tracking
       // state and is used to search a cell
@@ -391,20 +394,18 @@ int srsran_ue_sync_set_cell(srsran_ue_sync_t* q, srsran_cell_t cell)
         q->nof_avg_find_frames = FIND_NOF_AVG_FRAMES;
 
         srsran_sync_set_cfo_ema_alpha(&q->sfind, 0.8);
-        srsran_sync_set_cfo_ema_alpha(&q->strack, 0.1);
+        srsran_sync_set_cfo_ema_alpha(&q->strack, 0.6);
 
         srsran_sync_set_em_alpha(&q->sfind, 1);
+        srsran_sync_set_em_alpha(&q->strack, 1);
 
-        srsran_sync_set_threshold(&q->sfind, 2.0);
-        srsran_sync_set_threshold(&q->strack, 1.2);
+        srsran_sync_set_threshold(&q->sfind, 2.2);
+        srsran_sync_set_threshold(&q->strack, 1.8);
 
-        srsran_sync_set_cfo_ema_alpha(&q->sfind, 0.1);
-        srsran_sync_set_cfo_ema_alpha(&q->strack, 0.1);
+        srsran_sync_set_cfo_ema_alpha(&q->sfind, 0.8);
+        srsran_sync_set_cfo_ema_alpha(&q->strack, 0.6);
 
       } else {
-        q->sfind.cp  = cell.cp;
-        q->strack.cp = cell.cp;
-
         srsran_sync_set_frame_type(&q->sfind, cell.frame_type);
         srsran_sync_set_frame_type(&q->strack, cell.frame_type);
 
@@ -414,7 +415,7 @@ int srsran_ue_sync_set_cell(srsran_ue_sync_t* q, srsran_cell_t cell)
         srsran_sync_set_N_id_1(&q->sfind, cell.id / 3);
         // track does not correlate SSS so no need to generate sequences
 
-        srsran_sync_set_cfo_ema_alpha(&q->sfind, 0.1);
+        srsran_sync_set_cfo_ema_alpha(&q->sfind, 0.9);
         srsran_sync_set_cfo_ema_alpha(&q->strack, DEFAULT_CFO_EMA_TRACK);
 
         /* In find phase and if the cell is known, do not average pss correlation
@@ -422,9 +423,9 @@ int srsran_ue_sync_set_cell(srsran_ue_sync_t* q, srsran_cell_t cell)
          */
         q->nof_avg_find_frames = 1;
         srsran_sync_set_em_alpha(&q->sfind, 1);
-        srsran_sync_set_threshold(&q->sfind, 3.0);
+        srsran_sync_set_threshold(&q->sfind, 2.5);
 
-        srsran_sync_set_em_alpha(&q->strack, 0.0);
+        srsran_sync_set_em_alpha(&q->strack, 1);
         srsran_sync_set_threshold(&q->strack, 1.5);
       }
 
@@ -543,7 +544,7 @@ void srsran_ue_sync_set_cfo_tol(srsran_ue_sync_t* q, float cfo_tol)
 
 float srsran_ue_sync_get_sfo(srsran_ue_sync_t* q)
 {
-  return q->mean_sample_offset / 5e-3;
+  return q->mean_sample_offset / 40e-3;
 }
 
 int srsran_ue_sync_get_last_sample_offset(srsran_ue_sync_t* q)

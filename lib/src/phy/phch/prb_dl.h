@@ -1,5 +1,5 @@
 /**
- * Copyright 2013-2021 Software Radio Systems Limited
+ * Copyright 2013-2023 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -25,6 +25,7 @@
 #include "srsran/phy/common/phy_common.h"
 
 void prb_cp_ref(cf_t** input, cf_t** output, int offset, int nof_refs, int nof_intervals, bool advance_input);
+void prb_extract_re_ref(cf_t** input, cf_t** output, int offset, int nof_refs, int nof_intervals, bool advance_input);
 void prb_cp_ref_scs(cf_t** input, cf_t** output, int offset, int nof_refs, int nof_intervals, bool advance_input, srsran_scs_t scs);
 void prb_cp(cf_t** input, cf_t** output, int nof_prb);
 void prb_cp_scs(cf_t** input, cf_t** output, int nof_prb, srsran_scs_t scs);

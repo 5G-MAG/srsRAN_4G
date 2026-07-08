@@ -1,5 +1,5 @@
 /**
- * Copyright 2013-2021 Software Radio Systems Limited
+ * Copyright 2013-2023 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,8 +21,8 @@
 
 #include "srsenb/hdr/stack/rrc/rrc_bearer_cfg.h"
 #include "srsenb/hdr/common/common_enb.h"
+#include "srsran/asn1/obj_id_cmp_utils.h"
 #include "srsran/asn1/rrc_utils.h"
-#include "srsran/rrc/rrc_cfg_utils.h"
 
 namespace srsenb {
 
@@ -211,7 +211,8 @@ void security_cfg_handler::regenerate_keys_handover(uint32_t new_pci, uint32_t n
 
 bearer_cfg_handler::bearer_cfg_handler(uint16_t rnti_, const rrc_cfg_t& cfg_, gtpu_interface_rrc* gtpu_) :
   rnti(rnti_), cfg(&cfg_), gtpu(gtpu_), logger(&srslog::fetch_basic_logger("RRC"))
-{}
+{
+}
 
 void bearer_cfg_handler::reestablish_bearers(bearer_cfg_handler&& old_rnti_bearers)
 {
@@ -221,12 +222,12 @@ void bearer_cfg_handler::reestablish_bearers(bearer_cfg_handler&& old_rnti_beare
   old_rnti_bearers.current_drbs.clear();
 }
 
-int bearer_cfg_handler::add_erab(uint8_t                                            erab_id,
-                                 const asn1::s1ap::erab_level_qos_params_s&         qos,
-                                 const asn1::bounded_bitstring<1, 160, true, true>& addr,
-                                 uint32_t                                           teid_out,
-                                 srsran::const_span<uint8_t>                        nas_pdu,
-                                 asn1::s1ap::cause_c&                               cause)
+int bearer_cfg_handler::addmod_erab(uint8_t                                            erab_id,
+                                    const asn1::s1ap::erab_level_qos_params_s&         qos,
+                                    const asn1::bounded_bitstring<1, 160, true, true>& addr,
+                                    uint32_t                                           teid_out,
+                                    srsran::const_span<uint8_t>                        nas_pdu,
+                                    asn1::s1ap::cause_c&                               cause)
 {
   if (erab_id < 5) {
     logger->error("ERAB id=%d is invalid", erab_id);
@@ -268,9 +269,9 @@ int bearer_cfg_handler::add_erab(uint8_t                                        
   const rrc_cfg_qci_t& qci_cfg = qci_it->second;
 
   // perform checks on QCI config
-  if (addr.length() > 32) {
-    logger->error("Only addresses with length <= 32 are supported");
-    cause.set_radio_network().value = asn1::s1ap::cause_radio_network_opts::invalid_qos_combination;
+  if (addr.length() != 32 && addr.length() != 160) {
+    logger->error("Only addresses with IPv4 are supported");
+    cause.set_transport().value = asn1::s1ap::cause_transport_opts::transport_res_unavailable;
     return SRSRAN_ERROR;
   }
   if (qos.gbr_qos_info_present and not qci_cfg.configured) {
@@ -287,6 +288,16 @@ int bearer_cfg_handler::add_erab(uint8_t                                        
       logger->error("Provided E-RAB id=%d QoS not supported (guaranteed bitrates)", erab_id);
       cause.set_radio_network().value = asn1::s1ap::cause_radio_network_opts::invalid_qos_combination;
       return SRSRAN_ERROR;
+    }
+  }
+
+  // If it is an E-RAB modification, remove previous DRB object
+  if (erabs.count(erab_id) > 0) {
+    for (auto& drb : current_drbs) {
+      if (drb.eps_bearer_id_present and drb.eps_bearer_id == erab_id) {
+        srsran::rem_rrc_obj_id(current_drbs, drb.drb_id);
+        break;
+      }
     }
   }
 
@@ -361,16 +372,23 @@ int bearer_cfg_handler::modify_erab(uint8_t                                    e
   }
   auto     address  = erab_it->second.address;
   uint32_t teid_out = erab_it->second.teid_out;
-  release_erab(erab_id);
-  return add_erab(erab_id, qos, address, teid_out, nas_pdu, cause);
+  return addmod_erab(erab_id, qos, address, teid_out, nas_pdu, cause);
 }
 
 int bearer_cfg_handler::add_gtpu_bearer(uint32_t erab_id)
 {
   auto it = erabs.find(erab_id);
   if (it != erabs.end()) {
-    srsran::expected<uint32_t> teidin =
-        add_gtpu_bearer(erab_id, it->second.teid_out, it->second.address.to_number(), nullptr);
+    uint32_t v4_addr = {};
+    if (it->second.address.length() == 32) {
+      v4_addr = it->second.address.to_number();
+    } else if (it->second.address.length() == 160) {
+      v4_addr = asn1::bitstring_utils::to_number(it->second.address.data() + 16, 32);
+    } else {
+      logger->error("Pure IPv6 addresses not supported. erab_id=%d", erab_id);
+      return SRSRAN_ERROR;
+    }
+    srsran::expected<uint32_t> teidin = add_gtpu_bearer(erab_id, it->second.teid_out, v4_addr, nullptr);
     if (teidin.has_value()) {
       it->second.teid_in = teidin.value();
       return SRSRAN_SUCCESS;
@@ -414,17 +432,11 @@ void bearer_cfg_handler::rem_gtpu_bearer(uint32_t erab_id)
 
 void bearer_cfg_handler::fill_pending_nas_info(asn1::rrc::rrc_conn_recfg_r8_ies_s* msg)
 {
-  // Add space for NAS messages
-  uint8_t n_nas = erab_info_list.size();
-  if (n_nas > 0) {
-    msg->ded_info_nas_list_present = true;
-    msg->ded_info_nas_list.resize(n_nas);
-  }
-
-  uint32_t idx = 0;
   // DRBs have already been configured in GTPU during bearer setup
   // Add E-RAB info message for the E-RABs
   if (msg->rr_cfg_ded.drb_to_add_mod_list_present) {
+    erab_ids_with_pending_nas_pdus.clear();
+
     for (const drb_to_add_mod_s& drb : msg->rr_cfg_ded.drb_to_add_mod_list) {
       uint32_t lcid    = drb_to_lcid((lte_drb)drb.drb_id);
       auto     erab_it = std::find_if(
@@ -434,15 +446,30 @@ void bearer_cfg_handler::fill_pending_nas_info(asn1::rrc::rrc_conn_recfg_r8_ies_
       if (info_it != erab_info_list.end()) {
         const std::vector<uint8_t>& erab_info = info_it->second;
         logger->info(&erab_info[0], erab_info.size(), "connection_reconf erab_info -> nas_info rnti 0x%x", rnti);
-        msg->ded_info_nas_list[idx].resize(erab_info.size());
-        memcpy(msg->ded_info_nas_list[idx].data(), &erab_info[0], erab_info.size());
-        erab_info_list.erase(info_it);
+        msg->ded_info_nas_list.push_back({});
+        msg->ded_info_nas_list.back().resize(erab_info.size());
+        memcpy(msg->ded_info_nas_list.back().data(), &erab_info[0], erab_info.size());
+        erab_ids_with_pending_nas_pdus.push_back(erab_id);
       } else {
-        logger->debug("Not adding NAS message to connection reconfiguration. E-RAB id %d", erab_id);
+        logger->warning("Not adding NAS message to connection reconfiguration. E-RAB id %d", erab_id);
       }
-      idx++;
     }
+    msg->ded_info_nas_list_present = msg->ded_info_nas_list.size() > 0;
   }
+}
+
+void bearer_cfg_handler::clear_pending_nas_info()
+{
+  for (uint32_t erab_id : erab_ids_with_pending_nas_pdus) {
+    auto info_it = erab_info_list.find(erab_id);
+    if (info_it == erab_info_list.end()) {
+      logger->warning("NAS PDU with ERAB id={} went missing", erab_id);
+      continue;
+    }
+    erab_info_list.erase(info_it);
+  }
+
+  erab_ids_with_pending_nas_pdus.clear();
 }
 
 } // namespace srsenb

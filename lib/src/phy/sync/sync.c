@@ -1,5 +1,5 @@
 /**
- * Copyright 2013-2021 Software Radio Systems Limited
+ * Copyright 2013-2023 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -73,7 +73,7 @@ int srsran_sync_init_decim(srsran_sync_t* q, uint32_t frame_size, uint32_t max_o
     q->pss_filtering_enabled = false;
     q->detect_frame_type     = true;
 
-    q->cfo_cp_nsymbols = 3;
+    q->cfo_cp_nsymbols = 6;
     q->fft_size        = fft_size;
     q->frame_size      = frame_size;
     q->max_offset      = max_offset;
@@ -330,7 +330,7 @@ int srsran_sync_set_N_id_1(srsran_sync_t* q, uint32_t N_id_1)
     generate_freq_sss(q, N_id_1);
     return SRSRAN_SUCCESS;
   } else {
-    ERROR("Invalid N_id_2=%d", N_id_1);
+    ERROR("Invalid N_id_1=%d", N_id_1);
     return SRSRAN_ERROR_INVALID_INPUTS;
   }
 }
@@ -583,7 +583,7 @@ static float cfo_cp_estimate(srsran_sync_t* q, const cf_t* input)
 {
   uint32_t cp_offset = 0;
   cp_offset          = srsran_cp_synch(
-      &q->cp_synch, input, q->max_offset, q->cfo_cp_nsymbols, (uint32_t)SRSRAN_CP_LEN_NORM(1, q->fft_size));
+      &q->cp_synch, input, q->max_offset, q->cfo_cp_nsymbols, q->cp);
   cf_t  cp_corr_max = srsran_cp_synch_corr_output(&q->cp_synch, cp_offset);
   float cfo         = -cargf(cp_corr_max) / ((float)M_PI * 2.0f);
   return cfo;

@@ -1,5 +1,5 @@
 /**
- * Copyright 2013-2021 Software Radio Systems Limited
+ * Copyright 2013-2023 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -411,7 +411,7 @@ inline uint16_t enum_to_number(const pmch_info_t::mch_sched_period_t& mch_period
 
 struct mcch_msg_t {
   uint32_t       nof_common_sf_alloc = 0;
-  mbsfn_sf_cfg_t common_sf_alloc[8];
+  mbsfn_sf_cfg_t common_sf_alloc[8]  = {};
   enum class common_sf_alloc_period_t { rf4, rf8, rf16, rf32, rf64, rf128, rf256, nulltype } common_sf_alloc_period;
   uint32_t    nof_pmch_info;
   pmch_info_t pmch_info_list[15];
@@ -462,6 +462,8 @@ struct rrc_ue_capabilities_t {
   uint8_t category_ul       = 0;
   bool    support_dl_256qam = false;
   bool    support_ul_64qam  = false;
+  bool    support_ca_bands  = false;
+  bool    support_ul_ca     = false;
 };
 
 } // namespace srsran

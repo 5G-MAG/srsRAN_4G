@@ -1,5 +1,5 @@
 /**
- * Copyright 2013-2021 Software Radio Systems Limited
+ * Copyright 2013-2023 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -79,6 +79,26 @@ void prb_cp_ref_scs(cf_t** input, cf_t** output, int offset, int nof_refs, int n
     *input += (ref_interval - offset);
   }
 }
+// This function is only used to extract the PDSCH RE that are intercalated within a repeated PBCH symbol at a Release 16 CAS (MBMS)
+void prb_extract_re_ref(cf_t** input, cf_t** output, int offset, int nof_refs, int nof_intervals, bool advance_output)
+{
+  int i;
+
+  int ref_interval = ((SRSRAN_NRE_SCS(SRSRAN_SCS_15KHZ) / nof_refs));
+  *input += offset;
+  for (i = 0; i < nof_intervals - 1; i++) {
+    memcpy(*output, *input, sizeof(cf_t));
+    (*output)++;
+    
+    *input += (ref_interval);
+  }
+
+  memcpy(*output, *input, sizeof(cf_t));
+  (*output)++;
+  *input += (ref_interval - offset);
+}
+
+
 
 void prb_cp(cf_t** input, cf_t** output, int nof_prb)
 {

@@ -1,5 +1,5 @@
 /**
- * Copyright 2013-2021 Software Radio Systems Limited
+ * Copyright 2013-2023 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -28,6 +28,7 @@
 #include <strings.h>
 
 #include "srsran/config.h"
+#include "srsran/phy/ch_estimation/cedron_freq_estimator.h"
 #include "srsran/phy/ch_estimation/chest_ul.h"
 #include "srsran/phy/dft/dft_precoding.h"
 #include "srsran/phy/utils/convolution.h"
@@ -98,6 +99,11 @@ int srsran_chest_ul_init(srsran_chest_ul_t* q, uint32_t max_prb)
       ERROR("Error allocating memory for pregenerated signals");
       goto clean_exit;
     }
+
+    if (srsran_cedron_freq_est_init(&q->srsran_cedron_freq_est, max_prb)) {
+      ERROR("Error initializing cedron freq estimation algorithm.");
+      goto clean_exit;
+    }
   }
 
   ret = SRSRAN_SUCCESS;
@@ -117,6 +123,7 @@ void srsran_chest_ul_free(srsran_chest_ul_t* q)
     free(q->tmp_noise);
   }
   srsran_interp_linear_vector_free(&q->srsran_interp_linvec);
+  srsran_cedron_freq_est_free(&q->srsran_cedron_freq_est);
 
   if (q->pilot_estimates) {
     free(q->pilot_estimates);
@@ -293,6 +300,7 @@ static void chest_ul_estimate(srsran_chest_ul_t*     q,
                               uint32_t               nrefs_sym,
                               uint32_t               stride,
                               bool                   meas_ta_en,
+                              bool                   use_cedron_alg,
                               bool                   write_estimates,
                               uint32_t               n_prb[SRSRAN_NOF_SLOTS_PER_SF],
                               srsran_chest_ul_res_t* res)
@@ -310,7 +318,13 @@ static void chest_ul_estimate(srsran_chest_ul_t*     q,
   float ta_err = 0.0f;
   if (meas_ta_en) {
     for (int i = 0; i < nslots; i++) {
-      ta_err += srsran_vec_estimate_frequency(&q->pilot_estimates[i * nrefs_sym], nrefs_sym) / nslots;
+      if (use_cedron_alg) {
+        ta_err +=
+            srsran_cedron_freq_estimate(&q->srsran_cedron_freq_est, &q->pilot_estimates[i * nrefs_sym], nrefs_sym) /
+            nslots;
+      } else {
+        ta_err += srsran_vec_estimate_frequency(&q->pilot_estimates[i * nrefs_sym], nrefs_sym) / nslots;
+      }
     }
   }
 
@@ -355,16 +369,30 @@ static void chest_ul_estimate(srsran_chest_ul_t*     q,
     }
   }
 
-  // Estimate received pilot power
+  // Measure reference signal RE average power
+  cf_t  corr     = srsran_vec_acc_cc(q->pilot_recv_signal, nslots * nrefs_sym) / (nslots * nrefs_sym);
+  float rsrp_avg = __real__ corr * __real__ corr + __imag__ corr * __imag__ corr;
+
+  // Measure EPRE
+  float epre = srsran_vec_avg_power_cf(q->pilot_recv_signal, nslots * nrefs_sym);
+
+  // RSRP shall not be greater than EPRE
+  rsrp_avg = SRSRAN_MIN(rsrp_avg, epre);
+
+  // Calculate SNR
   if (isnormal(res->noise_estimate)) {
-    res->snr = srsran_vec_avg_power_cf(q->pilot_recv_signal, nslots * nrefs_sym) / res->noise_estimate;
+    res->snr = epre / res->noise_estimate;
   } else {
     res->snr = NAN;
   }
 
-  // Convert measurements in logarithm scale
-  res->snr_db             = srsran_convert_power_to_dB(res->snr);
-  res->noise_estimate_dbm = srsran_convert_power_to_dBm(res->noise_estimate);
+  // Set EPRE and RSRP
+  res->epre                = epre;
+  res->epre_dBfs           = srsran_convert_power_to_dB(res->epre);
+  res->rsrp                = rsrp_avg;
+  res->rsrp_dBfs           = srsran_convert_power_to_dB(res->rsrp);
+  res->snr_db              = srsran_convert_power_to_dB(res->snr);
+  res->noise_estimate_dbFs = srsran_convert_power_to_dBm(res->noise_estimate);
 }
 
 int srsran_chest_ul_estimate_pusch(srsran_chest_ul_t*     q,
@@ -398,7 +426,8 @@ int srsran_chest_ul_estimate_pusch(srsran_chest_ul_t*     q,
                            nrefs_sf);
 
   // Estimate
-  chest_ul_estimate(q, SRSRAN_NOF_SLOTS_PER_SF, nrefs_sym, 1, cfg->meas_ta_en, true, cfg->grant.n_prb, res);
+  chest_ul_estimate(
+      q, SRSRAN_NOF_SLOTS_PER_SF, nrefs_sym, 1, cfg->meas_ta_en, cfg->use_cedron_alg, true, cfg->grant.n_prb, res);
 
   return 0;
 }
@@ -479,15 +508,12 @@ int srsran_chest_ul_estimate_pucch(srsran_chest_ul_t*     q,
     srsran_vec_prod_conj_ccc(q->pilot_recv_signal, q->pilot_known_signal, q->pilot_estimates, nrefs_sf);
   }
 
-  // Measure power
-  float rsrp_avg = 0.0f;
-  for (int ns = 0; ns < SRSRAN_NOF_SLOTS_PER_SF; ns++) {
-    for (int i = 0; i < n_rs; i++) {
-      cf_t corr = srsran_vec_acc_cc(q->pilot_estimates, SRSRAN_NOF_SLOTS_PER_SF * SRSRAN_NRE * n_rs) / (SRSRAN_NRE);
-      rsrp_avg += __real__ corr * __real__ corr + __imag__ corr * __imag__ corr;
-    }
-  }
-  rsrp_avg /= SRSRAN_NOF_SLOTS_PER_SF * n_rs;
+  // Measure reference signal RE average power
+  cf_t corr = srsran_vec_acc_cc(q->pilot_estimates, SRSRAN_NOF_SLOTS_PER_SF * SRSRAN_NRE * n_rs) /
+              (SRSRAN_NOF_SLOTS_PER_SF * SRSRAN_NRE * n_rs);
+  float rsrp_avg = __real__ corr * __real__ corr + __imag__ corr * __imag__ corr;
+
+  // Measure EPRE
   float epre = srsran_vec_avg_power_cf(q->pilot_estimates, SRSRAN_NOF_SLOTS_PER_SF * SRSRAN_NRE * n_rs);
 
   // RSRP shall not be greater than EPRE
@@ -504,8 +530,14 @@ int srsran_chest_ul_estimate_pucch(srsran_chest_ul_t*     q,
     float ta_err = 0.0f;
     for (int ns = 0; ns < SRSRAN_NOF_SLOTS_PER_SF; ns++) {
       for (int i = 0; i < n_rs; i++) {
-        ta_err += srsran_vec_estimate_frequency(&q->pilot_estimates[(i + ns * n_rs) * SRSRAN_NRE], SRSRAN_NRE) /
-                  (float)(SRSRAN_NOF_SLOTS_PER_SF * n_rs);
+        if (cfg->use_cedron_alg) {
+          ta_err += srsran_cedron_freq_estimate(
+                        &q->srsran_cedron_freq_est, &q->pilot_estimates[(i + ns * n_rs) * SRSRAN_NRE], SRSRAN_NRE) /
+                    (float)(SRSRAN_NOF_SLOTS_PER_SF * n_rs);
+        } else {
+          ta_err += srsran_vec_estimate_frequency(&q->pilot_estimates[(i + ns * n_rs) * SRSRAN_NRE], SRSRAN_NRE) /
+                    (float)(SRSRAN_NOF_SLOTS_PER_SF * n_rs);
+        }
       }
     }
 
@@ -562,11 +594,11 @@ int srsran_chest_ul_estimate_pucch(srsran_chest_ul_t*     q,
     if (fpclassify(res->noise_estimate) == FP_ZERO) {
       res->noise_estimate = FLT_MIN;
     }
-    res->noise_estimate_dbm = srsran_convert_power_to_dBm(res->noise_estimate);
+    res->noise_estimate_dbFs = srsran_convert_power_to_dBm(res->noise_estimate);
 
     // Estimate SINR
     if (isnormal(res->noise_estimate)) {
-      res->snr    = res->rsrp / res->noise_estimate;
+      res->snr    = res->epre / res->noise_estimate;
       res->snr_db = srsran_convert_power_to_dB(res->snr);
     } else {
       res->snr    = NAN;
@@ -609,7 +641,7 @@ int srsran_chest_ul_estimate_srs(srsran_chest_ul_t*                 q,
 
   // Estimate
   uint32_t n_prb[2] = {};
-  chest_ul_estimate(q, 1, n_srs_re, 1, true, false, n_prb, res);
+  chest_ul_estimate(q, 1, n_srs_re, 1, true, false, false, n_prb, res);
 
   return SRSRAN_SUCCESS;
 }

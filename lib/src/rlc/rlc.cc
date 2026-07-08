@@ -1,5 +1,5 @@
 /**
- * Copyright 2013-2021 Software Radio Systems Limited
+ * Copyright 2013-2023 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -21,7 +21,7 @@
 
 #include "srsran/rlc/rlc.h"
 #include "srsran/common/rwlock_guard.h"
-#include "srsran/rlc/rlc_am_lte.h"
+#include "srsran/rlc/rlc_am_base.h"
 #include "srsran/rlc/rlc_tm.h"
 #include "srsran/rlc/rlc_um_lte.h"
 #include "srsran/rlc/rlc_um_nr.h"
@@ -112,12 +112,12 @@ void rlc::get_metrics(rlc_metrics_t& m, const uint32_t nof_tti)
     double rx_rate_mbps = (nof_tti > 0) ? ((metrics.num_rx_pdu_bytes * 8 / (double)1e6) / (nof_tti / 1000.0)) : 0.0;
     double tx_rate_mbps = (nof_tti > 0) ? ((metrics.num_tx_pdu_bytes * 8 / (double)1e6) / (nof_tti / 1000.0)) : 0.0;
 
-    logger.info("lcid=%d, rx_rate_mbps=%4.2f (real=%4.2f), tx_rate_mbps=%4.2f (real=%4.2f)",
-                it->first,
-                rx_rate_mbps,
-                rx_rate_mbps_real_time,
-                tx_rate_mbps,
-                tx_rate_mbps_real_time);
+    logger.debug("lcid=%d, rx_rate_mbps=%4.2f (real=%4.2f), tx_rate_mbps=%4.2f (real=%4.2f)",
+                 it->first,
+                 rx_rate_mbps,
+                 rx_rate_mbps_real_time,
+                 tx_rate_mbps,
+                 tx_rate_mbps_real_time);
     m.bearer[it->first] = metrics;
   }
 
@@ -230,9 +230,12 @@ void rlc::write_sdu_mch(uint32_t lcid, unique_byte_buffer_t sdu)
 bool rlc::rb_is_um(uint32_t lcid)
 {
   bool ret = false;
+  uint32_t mch_idx = 0; // [TODO]
 
   if (valid_lcid(lcid)) {
     ret = rlc_array.at(lcid)->get_mode() == rlc_mode_t::um;
+  } else if (valid_lcid_mrb(mch_idx, lcid)) {
+    ret = rlc_array_mrb.at(mch_idx).at(lcid)->get_mode() == rlc_mode_t::um;
   } else {
     logger.warning("LCID %d doesn't exist.", lcid);
   }
@@ -252,8 +255,11 @@ void rlc::discard_sdu(uint32_t lcid, uint32_t discard_sn)
 
 bool rlc::sdu_queue_is_full(uint32_t lcid)
 {
+  uint32_t mch_idx = 0; // [TODO]
   if (valid_lcid(lcid)) {
     return rlc_array.at(lcid)->sdu_queue_is_full();
+  } else if (valid_lcid_mrb(mch_idx, lcid)) {
+    return rlc_array_mrb.at(mch_idx).at(lcid)->sdu_queue_is_full();
   }
   logger.warning("RLC LCID %d doesn't exist. Ignoring queue check", lcid);
   return false;
@@ -413,7 +419,7 @@ int rlc::add_bearer(uint32_t lcid, const rlc_config_t& cnfg)
   rwlock_write_guard lock(rwlock);
 
   if (valid_lcid(lcid)) {
-    logger.error("LCID %d already exists", lcid);
+    logger.warning("LCID %d already exists", lcid);
     return SRSRAN_ERROR;
   }
 
@@ -426,7 +432,10 @@ int rlc::add_bearer(uint32_t lcid, const rlc_config_t& cnfg)
     case rlc_mode_t::am:
       switch (cnfg.rat) {
         case srsran_rat_t::lte:
-          rlc_entity = std::unique_ptr<rlc_common>(new rlc_am_lte(logger, lcid, pdcp, rrc, timers));
+          rlc_entity = std::unique_ptr<rlc_common>(new rlc_am(cnfg.rat, logger, lcid, pdcp, rrc, timers));
+          break;
+        case srsran_rat_t::nr:
+          rlc_entity = std::unique_ptr<rlc_common>(new rlc_am(cnfg.rat, logger, lcid, pdcp, rrc, timers));
           break;
         default:
           logger.error("AM not supported for this RAT");
@@ -467,7 +476,7 @@ int rlc::add_bearer(uint32_t lcid, const rlc_config_t& cnfg)
 
   rlc_entity->set_bsr_callback(bsr_callback);
 
-  if (not rlc_array.insert(rlc_map_pair_t(lcid, std::move(rlc_entity))).second) {
+  if (not rlc_array.emplace(lcid, std::move(rlc_entity)).second) {
     logger.error("Error inserting RLC entity in to array.");
     return SRSRAN_ERROR;
   }
@@ -500,7 +509,7 @@ int rlc::add_bearer_mrb(uint32_t mch_idx, uint32_t lcid)
     }
     logger.info("Added bearer MRB%d with mode RLC_UM", lcid);
   } else {
-    logger.warning("Bearer MRB%d already created.", lcid);
+    logger.info("Bearer MRB%d already created.", lcid);
   }
 
   return SRSRAN_SUCCESS;
@@ -549,7 +558,7 @@ void rlc::change_lcid(uint32_t old_lcid, uint32_t new_lcid)
     // insert old rlc entity into new LCID
     rlc_map_t::iterator         it         = rlc_array.find(old_lcid);
     std::unique_ptr<rlc_common> rlc_entity = std::move(it->second);
-    if (not rlc_array.insert(rlc_map_pair_t(new_lcid, std::move(rlc_entity))).second) {
+    if (not rlc_array.emplace(new_lcid, std::move(rlc_entity)).second) {
       logger.error("Error inserting RLC entity into array.");
       return;
     }

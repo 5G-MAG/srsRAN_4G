@@ -1,5 +1,5 @@
 /**
- * Copyright 2013-2021 Software Radio Systems Limited
+ * Copyright 2013-2023 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -57,7 +57,7 @@
 #include "srsran/config.h"
 
 #define SRSRAN_MAX_CANDIDATES_UE 16 // From 36.213 Table 9.1.1-1
-#define SRSRAN_MAX_CANDIDATES_COM 6 // From 36.213 Table 9.1.1-1
+#define SRSRAN_MAX_CANDIDATES_COM 7 // From 36.213 Table 9.1.1-1 // New more candidate in MBMS PDCCH aggregation level rel 16.
 #define SRSRAN_MAX_CANDIDATES (SRSRAN_MAX_CANDIDATES_UE + SRSRAN_MAX_CANDIDATES_COM)
 
 #define SRSRAN_MAX_FORMATS 4
@@ -96,7 +96,7 @@ typedef struct SRSRAN_API {
   srsran_chest_dl_t     chest;
   srsran_chest_dl_res_t chest_res;
   srsran_ofdm_t         fft[SRSRAN_MAX_PORTS];
-  srsran_ofdm_t         fft_mbsfn;
+  srsran_ofdm_t         fft_mbsfn[SRSRAN_MAX_PORTS];
 
   // Buffers to store channel symbols after demodulation
   cf_t*              sf_symbols[SRSRAN_MAX_PORTS];

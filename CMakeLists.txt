@@ -1,5 +1,5 @@
 #
-# Copyright 2013-2021 Software Radio Systems Limited
+# Copyright 2013-2023 Software Radio Systems Limited
 #
 # This file is part of srsRAN
 #
@@ -30,7 +30,7 @@ endif(${CMAKE_SOURCE_DIR} STREQUAL ${CMAKE_BINARY_DIR})
 ########################################################################
 # Project setup
 ########################################################################
-cmake_minimum_required(VERSION 2.6)
+cmake_minimum_required(VERSION 3.5)
 project( SRSRAN )
 message( STATUS "CMAKE_SYSTEM: " ${CMAKE_SYSTEM} )
 message( STATUS "CMAKE_SYSTEM_PROCESSOR: " ${CMAKE_SYSTEM_PROCESSOR} )
@@ -69,10 +69,10 @@ option(DISABLE_SIMD          "Disable SIMD instructions"                OFF)
 option(AUTO_DETECT_ISA       "Autodetect supported ISA extensions"      ON)
 
 option(ENABLE_GUI            "Enable GUI (using srsGUI)"                ON)
+option(ENABLE_RF_PLUGINS     "Enable RF plugins"                        ON)
 option(ENABLE_UHD            "Enable UHD"                               ON)
 option(ENABLE_BLADERF        "Enable BladeRF"                           ON)
 option(ENABLE_SOAPYSDR       "Enable SoapySDR"                          ON)
-option(ENABLE_SKIQ           "Enable Sidekiq SDK"                       ON)
 option(ENABLE_ZEROMQ         "Enable ZeroMQ"                            ON)
 option(ENABLE_HARDSIM        "Enable support for SIM cards"             ON)
 
@@ -82,7 +82,7 @@ option(ENABLE_ZMQ_TEST       "Enable ZMQ based E2E tests"               OFF)
 option(BUILD_STATIC          "Attempt to statically link external deps" OFF)
 option(RPATH                 "Enable RPATH"                             OFF)
 option(ENABLE_ASAN           "Enable gcc/clang address sanitizer"       OFF)
-option(ENABLE_GCOV           "Enable gcc/clang address sanitizer"       OFF)
+option(ENABLE_GCOV           "Enable gcov"                              OFF)
 option(ENABLE_MSAN           "Enable clang memory sanitizer"            OFF)
 option(ENABLE_TSAN           "Enable clang thread sanitizer"            OFF)
 option(ENABLE_TIDY           "Enable clang tidy"                        OFF)
@@ -97,6 +97,7 @@ option(FORCE_32BIT           "Add flags to force 32 bit compilation"    OFF)
 option(ENABLE_SRSLOG_TRACING "Enable event tracing using srslog"        OFF)
 option(ASSERTS_ENABLED       "Enable srsRAN asserts"                    ON)
 option(STOP_ON_WARNING       "Interrupt application on warning"         OFF)
+option(ENABLE_WERROR         "Stop compilation on errors"               ON)
 
 option(ENABLE_ALL_TEST       "Enable all unit/component test"           OFF)
 
@@ -106,12 +107,14 @@ option(ENABLE_ALL_TEST       "Enable all unit/component test"           OFF)
 # (gcc-ar, gcc-nm, ...).
 option(BUILD_WITH_LTO        "Enable LTO (experimental)"                OFF)
 
-if(${CMAKE_SYSTEM_PROCESSOR} MATCHES "aarch64")
-  set(GCC_ARCH armv8-a CACHE STRING "GCC compile for specific architecture.")
-  message(STATUS "Detected aarch64 processor")
-else(${CMAKE_SYSTEM_PROCESSOR} MATCHES "aarch64")
-  set(GCC_ARCH native CACHE STRING "GCC compile for specific architecture.")
-endif(${CMAKE_SYSTEM_PROCESSOR} MATCHES "aarch64")
+if(NOT GCC_ARCH)
+  if(${CMAKE_SYSTEM_PROCESSOR} MATCHES "aarch64")
+    set(GCC_ARCH armv8-a CACHE STRING "GCC compile for specific architecture.")
+    message(STATUS "Detected aarch64 processor")
+  else(${CMAKE_SYSTEM_PROCESSOR} MATCHES "aarch64")
+    set(GCC_ARCH native CACHE STRING "GCC compile for specific architecture.")
+  endif(${CMAKE_SYSTEM_PROCESSOR} MATCHES "aarch64")
+endif()
 
 # On RAM constrained (embedded) systems it may be useful to limit parallel compilation with, e.g. -DPARALLEL_COMPILE_JOBS=1
 if (PARALLEL_COMPILE_JOBS)
@@ -179,29 +182,17 @@ else(USE_MKL)
 endif(USE_MKL)
 
 # Crypto
-find_package(Polarssl)
-if (POLARSSL_FOUND)
-  set(SEC_INCLUDE_DIRS "${POLARSSL_INCLUDE_DIRS}")
+find_package(MbedTLS REQUIRED)
+if (MBEDTLS_FOUND)
+  set(SEC_INCLUDE_DIRS "${MBEDTLS_INCLUDE_DIRS}")
   if(BUILD_STATIC)
-    set(SEC_LIBRARIES    "${POLARSSL_STATIC_LIBRARIES}")
+    set(SEC_LIBRARIES    "${MBEDTLS_STATIC_LIBRARIES}")
   else(BUILD_STATIC)
-    set(SEC_LIBRARIES    "${POLARSSL_LIBRARIES}")
+    set(SEC_LIBRARIES    "${MBEDTLS_LIBRARIES}")
   endif(BUILD_STATIC)
-  add_definitions(-DHAVE_POLARSSL)
-else(POLARSSL_FOUND)
-  find_package(MbedTLS REQUIRED)
-  if (MBEDTLS_FOUND)
-    set(SEC_INCLUDE_DIRS "${MBEDTLS_INCLUDE_DIRS}")
-    if(BUILD_STATIC)
-      set(SEC_LIBRARIES    "${MBEDTLS_STATIC_LIBRARIES}")
-    else(BUILD_STATIC)
-      set(SEC_LIBRARIES    "${MBEDTLS_LIBRARIES}")
-    endif(BUILD_STATIC)
-    add_definitions(-DHAVE_MBEDTLS)
-  else(MBEDTLS_FOUND)
-    message(FATAL_ERROR "Either PolarSSL or mbedTLS are required to build srsRAN")
-  endif (MBEDTLS_FOUND)
-endif(POLARSSL_FOUND)
+else(MBEDTLS_FOUND)
+  message(FATAL_ERROR "mbedTLS is required to build srsRAN")
+endif (MBEDTLS_FOUND)
 
 # Hard-SIM support
 if(ENABLE_HARDSIM)
@@ -223,15 +214,6 @@ if(ENABLE_UHD)
     link_directories(${UHD_LIBRARY_DIRS})
   endif(UHD_FOUND)
 endif(ENABLE_UHD)
-
-# SKIQ
-if (ENABLE_SKIQ)
-  find_package(SKIQ)
-  if(SKIQ_FOUND)
-    include_directories(${SKIQ_INCLUDE_DIRS})
-    link_directories(${SKIQ_LIBRARY_DIRS})
-  endif(SKIQ_FOUND)
-endif (ENABLE_SKIQ)
 
 # BladeRF
 if(ENABLE_BLADERF)
@@ -265,12 +247,12 @@ if(ENABLE_TIMEPROF)
     add_definitions(-DENABLE_TIMEPROF)
 endif(ENABLE_TIMEPROF)
 
-if(BLADERF_FOUND OR UHD_FOUND OR SOAPYSDR_FOUND OR ZEROMQ_FOUND OR SKIQ_FOUND)
+if(BLADERF_FOUND OR UHD_FOUND OR SOAPYSDR_FOUND OR ZEROMQ_FOUND)
   set(RF_FOUND TRUE CACHE INTERNAL "RF frontend found")
-else(BLADERF_FOUND OR UHD_FOUND OR SOAPYSDR_FOUND OR ZEROMQ_FOUND OR SKIQ_FOUND)
+else(BLADERF_FOUND OR UHD_FOUND OR SOAPYSDR_FOUND OR ZEROMQ_FOUND)
   set(RF_FOUND FALSE CACHE INTERNAL "RF frontend found")
   add_definitions(-DDISABLE_RF)
-endif(BLADERF_FOUND OR UHD_FOUND OR SOAPYSDR_FOUND OR ZEROMQ_FOUND OR SKIQ_FOUND)
+endif(BLADERF_FOUND OR UHD_FOUND OR SOAPYSDR_FOUND OR ZEROMQ_FOUND)
 
 # Boost
 if(BUILD_STATIC)
@@ -280,6 +262,9 @@ endif(BUILD_STATIC)
 set(BOOST_REQUIRED_COMPONENTS
   program_options
 )
+if(UHD_FOUND) # Ubuntu 18.04 requires component 'system' to link UHD
+  list(APPEND BOOST_REQUIRED_COMPONENTS "system")
+endif(UHD_FOUND)
 if(UNIX AND EXISTS "/usr/lib64")
   list(APPEND BOOST_LIBRARYDIR "/usr/lib64") #fedora 64-bit fix
 endif(UNIX AND EXISTS "/usr/lib64")
@@ -379,9 +364,8 @@ macro(ADD_C_COMPILER_FLAG_IF_AVAILABLE flag have)
 endmacro(ADD_C_COMPILER_FLAG_IF_AVAILABLE)
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU" OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wno-comment -Wno-reorder -Wno-unused-variable -Wtype-limits -std=c++11 -fno-strict-aliasing")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wno-comment -Wno-reorder -Wno-unused-variable -Wtype-limits -std=c++14 -fno-strict-aliasing")
 
-  ADD_C_COMPILER_FLAG_IF_AVAILABLE("-Wno-unused-but-set-variable" HAVE_WNO_UNUSED_BUT_SET_VARIABLE)
   ADD_CXX_COMPILER_FLAG_IF_AVAILABLE("-Wno-unused-but-set-variable" HAVE_WNO_UNUSED_BUT_SET_VARIABLE)
 
   if (AUTO_DETECT_ISA)
@@ -409,8 +393,8 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU" OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   endif(NOT ${CMAKE_BUILD_TYPE} STREQUAL "Debug")
 
   if(FORCE_32BIT)
-    ADD_C_COMPILER_FLAG_IF_AVAILABLE("-m32" HAVE_WNO_UNUSED_BUT_SET_VARIABLE)
-    ADD_CXX_COMPILER_FLAG_IF_AVAILABLE("-m32" HAVE_WNO_UNUSED_BUT_SET_VARIABLE)
+    ADD_C_COMPILER_FLAG_IF_AVAILABLE("-m32" HAVE_M32)
+    ADD_CXX_COMPILER_FLAG_IF_AVAILABLE("-m32" HAVE_M32)
     set(CMAKE_SHARED_LINKER_FLAGS "-m32")
   endif(FORCE_32BIT)
 
@@ -421,6 +405,7 @@ ADD_C_COMPILER_FLAG_IF_AVAILABLE("-Werror=incompatible-pointer-types" HAVE_ERROR
 if(CMAKE_C_COMPILER_ID MATCHES "GNU" OR CMAKE_C_COMPILER_ID MATCHES "Clang")
   set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wno-comment -Wno-write-strings -Wno-unused-result -Wformat -Wmissing-field-initializers -Wtype-limits -std=c99 -fno-strict-aliasing -D_GNU_SOURCE")
 
+  ADD_C_COMPILER_FLAG_IF_AVAILABLE("-Wno-unused-but-set-variable" HAVE_WNO_UNUSED_BUT_SET_VARIABLE)
   if(${CMAKE_BUILD_TYPE} STREQUAL "Debug")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -ggdb -O0 -DDEBUG_MODE -DBUILD_TYPE_DEBUG")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -ggdb -O0 -DDEBUG_MODE -DBUILD_TYPE_DEBUG")
@@ -506,8 +491,12 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU" OR CMAKE_C_COMPILER_ID MATCHES "Clang")
   endif ()
 
   if (ENABLE_ASAN)
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=address -fno-omit-frame-pointer")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address -fno-omit-frame-pointer")
+    # Note: When using ASAN, we need to ensure the use of RPATH instead of RUNPATH via "-Wl,--disable-new-dtags"
+    # While RPATH is default, some systems (e.g. Ubuntu 18.04 and 20.04) use RUNPATH by default, which is non-transitive.
+    # Since ASAN intercepts dlopen(), by which it replaces the dynamic string token "$ORIGIN" to its own location,
+    # the RF plugins won't be found by "libsrsran_rf.so" when using ASAN + RUNPATH in the top-level executable.
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=address -fno-omit-frame-pointer -Wl,--disable-new-dtags")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address -fno-omit-frame-pointer -Wl,--disable-new-dtags")
   endif (ENABLE_ASAN)
 
   if (ENABLE_TSAN)
@@ -539,9 +528,15 @@ if("Ninja" STREQUAL ${CMAKE_GENERATOR})
 endif()
 
 # Add -Werror to C/C++ flags for newer compilers
-if(NOT CMAKE_CXX_COMPILER_VERSION VERSION_LESS 5.0)
+if(ENABLE_WERROR AND NOT CMAKE_CXX_COMPILER_VERSION VERSION_LESS 5.0)
   set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Werror")
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Werror")
+endif()
+
+# GCC >= 11.2.0: Disable analysis on "maybe-uninitialized" variables because of the high false-positive rate
+if(CMAKE_COMPILER_IS_GNUCXX AND NOT CMAKE_CXX_COMPILER_VERSION VERSION_LESS 11.2)
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-maybe-uninitialized")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-maybe-uninitialized")
 endif()
 
 if(CMAKE_C_COMPILER_ID MATCHES "GNU")
@@ -670,13 +665,14 @@ if(RF_FOUND)
   endif(ENABLE_SRSUE)
 
   if(ENABLE_SRSENB)
-    message(STATUS "Building with srsENB")
+    message(STATUS "Building with srsENB/srsGNB")
     add_subdirectory(srsenb)
+    add_subdirectory(srsgnb)
   else(ENABLE_SRSENB)
-    message(STATUS "srsENB build disabled")
+    message(STATUS "srsENB/srsGNB build disabled")
   endif(ENABLE_SRSENB)
 else(RF_FOUND)
-  message(STATUS "srsUE and srsENB builds disabled due to missing RF driver")
+  message(STATUS "srsUE and srsENB/srsGNB builds disabled due to missing RF driver")
 endif(RF_FOUND)
 
 if(ENABLE_SRSEPC)

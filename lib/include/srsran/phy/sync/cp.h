@@ -1,5 +1,5 @@
 /**
- * Copyright 2013-2021 Software Radio Systems Limited
+ * Copyright 2013-2023 Software Radio Systems Limited
  *
  * This file is part of srsRAN.
  *
@@ -40,7 +40,7 @@ SRSRAN_API void srsran_cp_synch_free(srsran_cp_synch_t* q);
 SRSRAN_API int srsran_cp_synch_resize(srsran_cp_synch_t* q, uint32_t symbol_sz);
 
 SRSRAN_API uint32_t
-srsran_cp_synch(srsran_cp_synch_t* q, const cf_t* input, uint32_t max_offset, uint32_t nof_symbols, uint32_t cp_len);
+srsran_cp_synch(srsran_cp_synch_t* q, const cf_t* input, uint32_t max_offset, uint32_t nof_symbols, srsran_cp_t cp);
 
 SRSRAN_API cf_t srsran_cp_synch_corr_output(srsran_cp_synch_t* q, uint32_t offset);
 
