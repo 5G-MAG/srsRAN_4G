@@ -361,6 +361,7 @@ int srsran_pmch_decode(srsran_pmch_t*         q,
     }
     out[0].crc                  = (srsran_dlsch_decode(&q->dl_sch, &cfg->pdsch_cfg, q->e, out[0].payload) == 0);
     out[0].avg_iterations_block = srsran_sch_last_noi(&q->dl_sch);
+    out[0].ber                  = srsran_sch_last_ber(&q->dl_sch);
 
     return SRSRAN_SUCCESS;
   } else {

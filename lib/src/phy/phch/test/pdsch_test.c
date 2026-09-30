@@ -19,6 +19,7 @@
  *
  */
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -55,6 +56,8 @@ static char*       input_file                   = NULL;
 static int         M                            = 1;
 static bool        enable_256qam                = false;
 static bool        use_8_bit                    = false;
+static bool        add_noise                    = false;
+static float       snr_db                       = 0.0f;
 
 void usage(char* prog)
 {
@@ -78,12 +81,13 @@ void usage(char* prog)
   printf("\t-j Enable PDSCH decoder coworker\n");
   printf("\t-v [set srsran_verbose to debug, default none]\n");
   printf("\t-q Enable/Disable 256QAM modulation (default %s)\n", enable_256qam ? "enabled" : "disabled");
+  printf("\t-S add AWGN at this SNR per resource element, in dB, and check the pre-FEC BER [Default no noise]\n");
 }
 
 void parse_args(int argc, char** argv)
 {
   int opt;
-  while ((opt = getopt(argc, argv, "fmMcsbrtRFpnqawvXxj")) != -1) {
+  while ((opt = getopt(argc, argv, "fmMcsbrtRFpnqawvXxjS")) != -1) {
     switch (opt) {
       case 'f':
         input_file = argv[optind];
@@ -142,6 +146,10 @@ void parse_args(int argc, char** argv)
       case 'q':
         enable_256qam ^= true;
         break;
+      case 'S':
+        snr_db    = strtof(argv[optind], NULL);
+        add_noise = true;
+        break;
       default:
         usage(argv[0]);
         exit(-1);
@@ -185,6 +193,39 @@ static int check_softbits(srsran_pdsch_t*     pdsch_enb,
     }
   }
   return ret;
+}
+
+/* Pre-FEC BER of a decoded TB: exactly 0 without noise. With noise, for QPSK (Gray mapped, one antenna, identity
+ * channel) each hard decision is wrong with probability Q(sqrt(SNR)) = erfc(sqrt(SNR / 2)) / 2; the 25% margin allows
+ * for the statistics of one subframe and is not a property of the estimator. Other modulations only need a BER
+ * strictly between 0 and 0.5. */
+static int check_ber(srsran_pdsch_cfg_t* pdsch_cfg, int tb, float ber)
+{
+  if (!add_noise) {
+    printf("TB%d: pre-FEC BER %f (no noise)\n", tb, ber);
+    if (ber != 0.0f) {
+      ERROR("TB%d: pre-FEC BER is %f without noise, expected 0", tb, ber);
+      return SRSRAN_ERROR;
+    }
+    return SRSRAN_SUCCESS;
+  }
+
+  if (pdsch_cfg->grant.tb[tb].mod == SRSRAN_MOD_QPSK && nof_rx_antennas == 1 && tm == SRSRAN_TM1) {
+    float expected = 0.5f * erfcf(sqrtf(powf(10.0f, snr_db / 10.0f) / 2.0f));
+    printf("TB%d: pre-FEC BER %f at SNR %.1f dB, QPSK expected %f\n", tb, ber, snr_db, expected);
+    if (!(fabsf(ber - expected) <= 0.25f * expected)) {
+      ERROR("TB%d: pre-FEC BER %f does not track the expected %f", tb, ber, expected);
+      return SRSRAN_ERROR;
+    }
+    return SRSRAN_SUCCESS;
+  }
+
+  printf("TB%d: pre-FEC BER %f at SNR %.1f dB\n", tb, ber, snr_db);
+  if (!(ber > 0.0f && ber < 0.5f)) {
+    ERROR("TB%d: pre-FEC BER %f with noise, expected between 0 and 0.5", tb, ber);
+    return SRSRAN_ERROR;
+  }
+  return SRSRAN_SUCCESS;
 }
 
 int main(int argc, char** argv)
@@ -458,6 +499,19 @@ int main(int argc, char** argv)
         }
       }
     }
+
+    /* With p_a = 0 dB a data RE carries unit power, so the noise power N0 is -snr_db dBfs */
+    if (add_noise) {
+      srsran_channel_awgn_t awgn;
+      if (srsran_channel_awgn_init(&awgn, 1234) || srsran_channel_awgn_set_n0(&awgn, -snr_db)) {
+        ERROR("Error initialising AWGN channel");
+        goto quit;
+      }
+      for (uint32_t j = 0; j < nof_rx_antennas; j++) {
+        srsran_channel_awgn_run_c(&awgn, rx_slot_symbols[j], rx_slot_symbols[j], SRSRAN_NOF_RE(cell));
+      }
+      srsran_channel_awgn_free(&awgn);
+    }
   }
 
   INFO(" Global:");
@@ -486,6 +540,7 @@ int main(int argc, char** argv)
     srsran_pdsch_enable_coworker(&pdsch_rx);
   }
 
+  pdsch_cfg.meas_ber_en = true;
   for (uint32_t i = 0; i < SRSRAN_MAX_CODEWORDS; i++) {
     pdsch_cfg.softbuffers.rx[i] = softbuffers_rx[i];
     pdsch_res[i].payload        = data_rx[i];
@@ -521,7 +576,7 @@ int main(int argc, char** argv)
   /* Check Tx and Rx bytes */
   for (int tb = 0; tb < SRSRAN_MAX_CODEWORDS; tb++) {
     if (pdsch_cfg.grant.tb[tb].enabled) {
-      if (check_softbits(&pdsch_tx, &pdsch_rx, &pdsch_cfg, subframe, tb)) {
+      if (!add_noise && check_softbits(&pdsch_tx, &pdsch_rx, &pdsch_cfg, subframe, tb)) {
         ERROR("TB%d: The received softbits in subframe %d DO NOT match the encoded bits (crc=%d)\n",
               tb,
               subframe,
@@ -539,6 +594,10 @@ int main(int argc, char** argv)
             ret = SRSRAN_ERROR;
             goto quit;
           }
+        }
+        if (!input_file && check_ber(&pdsch_cfg, tb, pdsch_res[tb].ber)) {
+          ret = SRSRAN_ERROR;
+          goto quit;
         }
       }
     }

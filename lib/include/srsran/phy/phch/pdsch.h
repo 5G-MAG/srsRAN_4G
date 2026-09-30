@@ -83,6 +83,7 @@ typedef struct {
   bool     crc;
   float    avg_iterations_block;
   float    evm;
+  float    ber; // pre-FEC bit error rate estimate, -1 unless measured (see srsran_sch_last_ber)
 } srsran_pdsch_res_t;
 
 SRSRAN_API int srsran_pdsch_init_ue(srsran_pdsch_t* q, uint32_t max_prb, uint32_t nof_rx_antennas);
