@@ -247,6 +247,12 @@ add_lte_test(pdsch_test_qam16 pdsch_test -m 20 -n 100)
 add_lte_test(pdsch_test_qam16 pdsch_test -m 20 -n 100 -r 2)
 add_lte_test(pdsch_test_qam64 pdsch_test -n 100)
 
+# Pre-FEC BER estimate with noise: tracks Q(sqrt(SNR)) for QPSK, 16-bit and 8-bit LLR, and is non-zero for 16QAM
+add_lte_test(pdsch_test_ber_qpsk_snr3 pdsch_test -m 2 -n 50 -S 3)
+add_lte_test(pdsch_test_ber_qpsk_snr6 pdsch_test -m 2 -n 50 -S 6)
+add_lte_test(pdsch_test_ber_qpsk_8bit_snr3 pdsch_test -b -m 2 -n 50 -S 3)
+add_lte_test(pdsch_test_ber_qam16_snr16 pdsch_test -m 12 -n 50 -S 16)
+
 # PDSCH test for 1 transmision mode and 2 Rx antennas
 add_lte_test(pdsch_test_sin_6   pdsch_test -x 1 -a 2 -n 6)
 add_lte_test(pdsch_test_sin_12  pdsch_test -x 1 -a 2 -n 12)

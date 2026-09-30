@@ -738,6 +738,7 @@ static int srsran_pdsch_codeword_decode(srsran_pdsch_t*     q,
 
     /* Return  */
     ret = srsran_dlsch_decode2(dl_sch, cfg, q->e[codeword_idx], data[tb_idx].payload, tb_idx, nof_layers);
+    data[tb_idx].ber = srsran_sch_last_ber(dl_sch);
 
     if (ret == SRSRAN_SUCCESS) {
       *ack = true;

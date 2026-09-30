@@ -53,6 +53,7 @@ typedef struct SRSRAN_API {
 
   uint32_t max_iterations;
   float    avg_iterations;
+  float    last_ber;
 
   bool llr_is_8bit;
 
@@ -62,6 +63,8 @@ typedef struct SRSRAN_API {
   void*            e;
   uint8_t*         temp_g_bits;
   uint32_t*        ul_interleaver;
+  uint8_t*         ber_w_buff;
+  uint8_t*         ber_e_bits;
   srsran_uci_bit_t ack_ri_bits[57600]; // 4*M_sc*Qm_max for RI and ACK
 
   srsran_tcod_t encoder;
@@ -80,6 +83,17 @@ SRSRAN_API void srsran_sch_free(srsran_sch_t* q);
 SRSRAN_API void srsran_sch_set_max_noi(srsran_sch_t* q, uint32_t max_iterations);
 
 SRSRAN_API float srsran_sch_last_noi(srsran_sch_t* q);
+
+/**
+ * Bit error rate before turbo decoding, estimated during the last DL-SCH decode that had meas_ber_en set.
+ * Every code block that passed its CRC in that call is re-encoded and rate matched as the transmitter did, and
+ * compared with the hard decisions of the received soft bits of that block. The result is the pooled ratio of
+ * disagreeing bits to compared bits over those code blocks. Soft bits equal to zero carry no decision and are not
+ * compared. Code blocks that did not pass their CRC, or were decoded in an earlier transmission, are not included.
+ *
+ * @return the estimate, or -1 if no code block was compared
+ */
+SRSRAN_API float srsran_sch_last_ber(srsran_sch_t* q);
 
 SRSRAN_API int srsran_dlsch_encode(srsran_sch_t* q, srsran_pdsch_cfg_t* cfg, uint8_t* data, uint8_t* e_bits);
 

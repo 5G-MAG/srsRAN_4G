@@ -185,6 +185,16 @@ int srsran_sch_init(srsran_sch_t* q)
     if (!q->ul_interleaver) {
       goto clean;
     }
+    // Scratch for the BER estimate: a circular buffer the size of a Tx soft buffer, and packed rate-matched bits
+    q->ber_w_buff = srsran_vec_u8_malloc(SOFTBUFFER_SIZE);
+    if (!q->ber_w_buff) {
+      goto clean;
+    }
+    q->ber_e_bits = srsran_vec_u8_malloc(SCH_MAX_G_BITS / 8 + 1);
+    if (!q->ber_e_bits) {
+      goto clean;
+    }
+    q->last_ber = -1.0f;
     if (srsran_uci_cqi_init(&q->uci_cqi)) {
       goto clean;
     }
@@ -214,6 +224,12 @@ void srsran_sch_free(srsran_sch_t* q)
   if (q->ul_interleaver) {
     free(q->ul_interleaver);
   }
+  if (q->ber_w_buff) {
+    free(q->ber_w_buff);
+  }
+  if (q->ber_e_bits) {
+    free(q->ber_e_bits);
+  }
   srsran_tdec_free(&q->decoder);
   srsran_tcod_free(&q->encoder);
   srsran_uci_cqi_free(&q->uci_cqi);
@@ -232,6 +248,11 @@ void srsran_sch_set_max_noi(srsran_sch_t* q, uint32_t max_iterations)
 float srsran_sch_last_noi(srsran_sch_t* q)
 {
   return q->avg_iterations;
+}
+
+float srsran_sch_last_ber(srsran_sch_t* q)
+{
+  return q->last_ber;
 }
 
 /* Encode a transport block according to 36.212 5.3.2
@@ -368,6 +389,55 @@ static int encode_tb(srsran_sch_t*           q,
   return encode_tb_off(q, soft_buffer, cb_segm, Qm, rv, nof_e_bits, data, e_bits, 0);
 }
 
+/* Re-encodes and rate matches one decoded code block (cb_len bits, packed, code block CRC included) as the
+ * transmitter did, and counts the received soft bits of this transmission (n_e of them, starting at e_bits) whose
+ * hard decision disagrees. A positive soft bit decides 1, as in the turbo decoder. Soft bits equal to zero carry
+ * no decision and are not counted in either total. */
+static void cb_count_bit_errors(srsran_sch_t*  q,
+                                const uint8_t* cb_bits,
+                                uint32_t       cb_len,
+                                uint32_t       cb_len_idx,
+                                uint32_t       rv,
+                                const void*    e_bits,
+                                uint32_t       n_e,
+                                uint64_t*      nof_errors,
+                                uint64_t*      nof_bits)
+{
+  if (n_e > SCH_MAX_G_BITS) {
+    return;
+  }
+
+  // With no code block CRC the encoder reads the bits as given; it still feeds crc_tb, which every user resets first
+  memcpy(q->cb_in, cb_bits, cb_len / 8);
+  if (srsran_tcod_encode_lut(&q->encoder, &q->crc_tb, NULL, q->cb_in, q->parity_bits, cb_len_idx, false) < 0) {
+    return;
+  }
+
+  // srsran_rm_turbo_tx_lut() fills the circular buffer only for rv 0, so fill it first for any other rv
+  if (rv != 0 && srsran_rm_turbo_tx_lut(q->ber_w_buff, q->cb_in, q->parity_bits, q->ber_e_bits, cb_len_idx, 0, 0, 0)) {
+    return;
+  }
+  if (srsran_rm_turbo_tx_lut(q->ber_w_buff, q->cb_in, q->parity_bits, q->ber_e_bits, cb_len_idx, n_e, 0, rv)) {
+    return;
+  }
+
+  const int8_t*  e_b    = e_bits;
+  const int16_t* e_s    = e_bits;
+  uint64_t       errors = 0;
+  uint64_t       bits   = 0;
+  for (uint32_t i = 0; i < n_e; i++) {
+    int16_t llr = q->llr_is_8bit ? e_b[i] : e_s[i];
+    if (llr == 0) {
+      continue;
+    }
+    uint8_t tx_bit = (q->ber_e_bits[i / 8] >> (7 - i % 8)) & 1;
+    errors += (llr > 0) != tx_bit;
+    bits++;
+  }
+  *nof_errors += errors;
+  *nof_bits += bits;
+}
+
 bool decode_tb_cb(srsran_sch_t*           q,
                   srsran_softbuffer_rx_t* softbuffer,
                   srsran_cbsegm_t*        cb_segm,
@@ -375,7 +445,8 @@ bool decode_tb_cb(srsran_sch_t*           q,
                   uint32_t                rv,
                   uint32_t                nof_e_bits,
                   void*                   e_bits,
-                  uint8_t*                data)
+                  uint8_t*                data,
+                  bool                    meas_ber)
 {
   int8_t*  e_bits_b = e_bits;
   int16_t* e_bits_s = e_bits;
@@ -386,6 +457,9 @@ bool decode_tb_cb(srsran_sch_t*           q,
   }
 
   q->avg_iterations = 0;
+
+  uint64_t ber_errors = 0;
+  uint64_t ber_bits   = 0;
 
   for (int cb_idx = 0; cb_idx < cb_segm->C; cb_idx++) {
     /* Do not process blocks with CRC Ok */
@@ -455,6 +529,19 @@ bool decode_tb_cb(srsran_sch_t*           q,
 
       } while (cb_noi < q->max_iterations && !early_stop);
 
+      // The decoder output still holds the whole code block, CRC included: the next block has not overwritten it
+      if (meas_ber && early_stop) {
+        cb_count_bit_errors(q,
+                            &data[cb_idx * rlen / 8],
+                            cb_len,
+                            cb_len_idx,
+                            rv,
+                            q->llr_is_8bit ? (void*)&e_bits_b[rp] : (void*)&e_bits_s[rp],
+                            n_e2,
+                            &ber_errors,
+                            &ber_bits);
+      }
+
       INFO("CB %d: rp=%d, n_e=%d, cb_len=%d, CRC=%s, rlen=%d, iterations=%d/%d",
            cb_idx,
            rp,
@@ -490,6 +577,9 @@ bool decode_tb_cb(srsran_sch_t*           q,
   }
 
   q->avg_iterations /= (float)cb_segm->C;
+  if (ber_bits > 0) {
+    q->last_ber = (float)((double)ber_errors / (double)ber_bits);
+  }
   return softbuffer->tb_crc;
 }
 
@@ -513,8 +603,13 @@ static int decode_tb(srsran_sch_t*           q,
                      uint32_t                rv,
                      uint32_t                nof_e_bits,
                      int16_t*                e_bits,
-                     uint8_t*                data)
+                     uint8_t*                data,
+                     bool                    meas_ber)
 {
+  if (q != NULL) {
+    q->last_ber = -1.0f;
+  }
+
   // Check inputs
   if (q == NULL || data == NULL || softbuffer == NULL || e_bits == NULL || cb_segm == NULL || Qm == 0) {
     ERROR("Missing inputs: data=%d, softbuffer=%d, e_bits=%d, cb_segm=%d Qm=%d",
@@ -545,7 +640,7 @@ static int decode_tb(srsran_sch_t*           q,
   }
 
   // Process Codeblocks
-  bool cb_crc_ok = decode_tb_cb(q, softbuffer, cb_segm, Qm, rv, nof_e_bits, e_bits, data);
+  bool cb_crc_ok = decode_tb_cb(q, softbuffer, cb_segm, Qm, rv, nof_e_bits, e_bits, data, meas_ber);
 
   // If any of the CBs CRC is KO
   if (!cb_crc_ok) {
@@ -605,7 +700,8 @@ int srsran_dlsch_decode2(srsran_sch_t*       q,
                    cfg->grant.tb[tb_idx].rv,
                    cfg->grant.tb[tb_idx].nof_bits,
                    e_bits,
-                   data);
+                   data,
+                   cfg->meas_ber_en);
 }
 
 /**
@@ -1187,7 +1283,8 @@ int srsran_ulsch_decode(srsran_sch_t*       q,
   // Decode ULSCH
   if (cb_segm.tbs > 0) {
     uint32_t G = nb_q / Qm - Q_prime_ri - Q_prime_cqi;
-    ret        = decode_tb(q, cfg->softbuffers.rx, &cb_segm, Qm, cfg->grant.tb.rv, G * Qm, &g_bits[e_offset], data);
+    ret        = decode_tb(
+        q, cfg->softbuffers.rx, &cb_segm, Qm, cfg->grant.tb.rv, G * Qm, &g_bits[e_offset], data, false);
   }
   return ret;
 }

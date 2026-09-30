@@ -66,6 +66,7 @@ typedef struct SRSRAN_API {
   } softbuffers;
 
   bool     meas_evm_en;
+  bool     meas_ber_en;
   bool     meas_time_en;
   uint32_t meas_time_value;
 } srsran_pdsch_cfg_t;
