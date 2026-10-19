@@ -8,8 +8,7 @@
 </p>
 
 <p align="center">
-  <img alt="Status: under development"
-    src="https://img.shields.io/badge/Status-Under%20Development-e67e22">
+  <img alt="Status" src="https://img.shields.io/endpoint?url=https%3A%2F%2Fwww.5g-mag.com%2Fbadges%2Fstatus%2FsrsRAN_4G.json">
   <a href="https://github.com/5G-MAG/srsRAN_4G/releases"><img alt="Version"
     src="https://img.shields.io/github/v/release/5G-MAG/srsRAN_4G?label=Version"></a>
   <a href="LICENSE"><img alt="License: GNU AGPL v3.0"
@@ -28,7 +27,7 @@
 
 |  |  |
 |---|---|
-| **Part of** | [3GPP RAN and Core Platforms](https://www.5g-mag.com/reference-tools/3gpp-platforms/), alongside [open5gs](https://github.com/5G-MAG/open5gs), [rt-srsRAN_Project](https://github.com/5G-MAG/rt-srsRAN_Project) and [srsRAN](https://github.com/5G-MAG/srsRAN) |
+| **Part of** | [3GPP RAN and Core Platforms](https://www.5g-mag.com/reference-tools/3gpp-platforms/), alongside [open5gs](https://github.com/5G-MAG/open5gs), [rt-5gc-service-consumers](https://github.com/5G-MAG/rt-5gc-service-consumers), [rt-srsRAN_Project](https://github.com/5G-MAG/rt-srsRAN_Project), [srsRAN](https://github.com/5G-MAG/srsRAN) |
 
 ## Introduction
 
