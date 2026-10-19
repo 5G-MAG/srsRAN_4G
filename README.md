@@ -1,25 +1,63 @@
-srsRAN
-======
+<p align="center">
+  <img src=".github/banner.svg" width="100%" alt="Reference Tools · 3GPP RAN and Core Platforms: 5G-MAG's fork of srsRAN_4G">
+</p>
 
-[![Build Status](https://github.com/srsran/srsRAN_4G/actions/workflows/ccpp.yml/badge.svg?branch=master)](https://github.com/srsran/srsRAN_4G/actions/workflows/ccpp.yml)
-[![CodeQL](https://github.com/srsran/srsRAN_4G/actions/workflows/codeql.yml/badge.svg?branch=master)](https://github.com/srsran/srsRAN_4G/actions/workflows/codeql.yml)
-[![Coverity](https://scan.coverity.com/projects/28268/badge.svg)](https://scan.coverity.com/projects/srsran_4g_agpl)
+<p align="center">
+  5G-MAG's fork of srsRAN_4G, the open source 4G software radio suite developed by
+  <a href="http://www.srs.io">SRS</a>.
+</p>
 
-srsRAN is an open source 4G software radio suite developed by [SRS](http://www.srs.io). For 5G RAN, see our new O-RAN CU/DU solution - [srsRAN Project](https://www.github.com/srsran/srsran_project).
+<p align="center">
+  <img alt="Status" src="https://img.shields.io/endpoint?url=https%3A%2F%2Fwww.5g-mag.com%2Fbadges%2Fstatus%2FsrsRAN_4G.json">
+  <a href="https://github.com/5G-MAG/srsRAN_4G/releases"><img alt="Version"
+    src="https://img.shields.io/github/v/release/5G-MAG/srsRAN_4G?label=Version"></a>
+  <a href="LICENSE"><img alt="License: GNU AGPL v3.0"
+    src="https://img.shields.io/badge/License-AGPL%20v3.0-blue"></a>
+</p>
 
-See the [srsRAN 4G project pages](https://www.srsran.com) for information, guides and project news.
+<p align="center">
+  <a href="https://www.5g-mag.com/reference-tools/3gpp-platforms/">Project page</a> &nbsp;&middot;&nbsp;
+  <a href="https://github.com/5G-MAG/srsRAN_4G/issues">Issues</a> &nbsp;&middot;&nbsp;
+  <a href="https://www.5g-mag.com/contributing">Contributing</a>
+</p>
+
+---
+
+## At a glance
+
+|  |  |
+|---|---|
+| **Part of** | [3GPP RAN and Core Platforms](https://www.5g-mag.com/reference-tools/3gpp-platforms/), alongside [open5gs](https://github.com/5G-MAG/open5gs), [rt-5gc-service-consumers](https://github.com/5G-MAG/rt-5gc-service-consumers), [rt-srsRAN_Project](https://github.com/5G-MAG/rt-srsRAN_Project), [srsRAN](https://github.com/5G-MAG/srsRAN) |
+
+## Introduction
+
+The upstream repository is [srsran/srsRAN_4G](https://github.com/srsran/srsRAN_4G). For 5G RAN,
+SRS provides the O-RAN CU/DU solution [srsRAN Project](https://www.github.com/srsran/srsran_project).
 
 The srsRAN suite includes:
-  * srsUE - a full-stack SDR 4G UE application with prototype 5G features
-  * srsENB - a full-stack SDR 4G eNodeB application
-  * srsEPC - a light-weight 4G core network implementation with MME, HSS and S/P-GW
 
-For application features, build instructions and user guides see the [srsRAN 4G documentation](https://docs.srsran.com/projects/4g/).
+* srsUE: a full-stack SDR 4G UE application with prototype 5G features
+* srsENB: a full-stack SDR 4G eNodeB application
+* srsEPC: a lightweight 4G core network implementation with MME, HSS and S/P-GW
 
-For license details, see LICENSE file.
+For information, guides and project news, see the [srsRAN 4G project pages](https://www.srsran.com).
+For application features, build instructions and user guides, see the
+[srsRAN 4G documentation](https://docs.srsran.com/projects/4g/).
 
-Support
-=======
+### Support
 
-Mailing list: https://lists.srsran.com/mailman/listinfo/srsran-users
+Upstream mailing list: https://lists.srsran.com/mailman/listinfo/srsran-users
 
+## Contributing
+
+Contributions to this fork are welcome. How to raise an issue, fork the repository and open a pull
+request, and the Contributor License Agreement required before code can be merged, are described at
+<https://www.5g-mag.com/contributing>.
+
+Contributions to upstream srsRAN_4G go to [srsran/srsRAN_4G](https://github.com/srsran/srsRAN_4G), under that project's own contribution terms.
+
+## License
+
+Distributed under the GNU Affero General Public License v3.0, as the upstream srsRAN_4G project,
+and this fork keeps that licence. See [LICENSE](LICENSE), and [COPYRIGHT](COPYRIGHT) for the copyright holders and the licences of
+third-party files.
